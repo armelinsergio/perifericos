@@ -66,15 +66,15 @@ def to_excel(df):
 # --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
 
-# --- ESCONDER BOTÃO DE DEPLOY E RODAPÉ (MANTENDO O MENU DE TEMA) ---
+# --- ESCONDER MENU, BOTÃO DE DEPLOY, GITHUB E RODAPÉ ---
 esconder_elementos = """
     <style>
-    /* Oculta o botão de Deploy */
-    [data-testid="stAppDeployButton"] {display: none;}
-    /* Oculta a linha colorida no topo para um visual mais limpo */
-    [data-testid="stDecoration"] {display: none;}
-    /* Oculta a marca d'água 'Made with Streamlit' no rodapé */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
     footer {visibility: hidden;}
+    [data-testid="stAppDeployButton"] {display: none;}
+    [data-testid="stToolbar"] {display: none;}
+    [data-testid="stDecoration"] {display: none;}
     </style>
 """
 st.markdown(esconder_elementos, unsafe_allow_html=True)
@@ -86,17 +86,12 @@ if os.path.exists("logo.png"):
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade de Operação")
 unidade_atual = st.sidebar.selectbox("Selecione a Unidade", UNIDADES)
-
 st.sidebar.divider()
 
 st.sidebar.title("🎮 Menu Principal")
 menu = ["📊 Dashboard", "📤 Dar Baixa (Saída)", "📥 Reposição (Entrada)", "⚙️ Gerenciar Itens", "📜 Histórico"]
 choice = st.sidebar.selectbox("Selecione uma opção", menu)
-
 st.sidebar.divider()
-
-# --- AVISO VISÍVEL SOBRE O MODO ESCURO/CLARO ---
-st.sidebar.info("💡 **Tema Visual:** Para alternar entre o Modo Claro e o Modo Escuro, clique nos três pontos (⋮) no canto superior direito da tela, vá em **Settings** e altere o **Theme**.")
 
 # --- LÓGICA DAS TELAS ---
 
@@ -193,8 +188,7 @@ elif choice == "⚙️ Gerenciar Itens":
                 try:
                     run_query("INSERT INTO produtos VALUES (?, ?, ?, ?)", (unidade_atual, n_item, n_qtd, n_lim), True)
                     st.toast(f"✨ Novo Item Cadastrado: {n_item}")
-                    st.success(f"O item '{n_item}' foi cadastrado com sucesso!")
-                    st.rerun()
+                    st.success(f"O item '{n_item}' foi cadastrado com sucesso na unidade {unidade_atual}!")
                 except: st.error("Item já existe nesta unidade.")
             else: st.error("Digite o nome do periférico.")
 
@@ -273,9 +267,10 @@ elif choice == "📜 Histórico":
                           df_hist['item'].str.upper().str.contains(busca, na=False) | 
                           df_hist['chamado'].str.contains(busca, na=False)]
     
-    with col_excel:
+    col1, col2 = st.columns([4, 1])
+    with col2:
         if not df_hist.empty:
             excel_data = to_excel(df_hist)
-            st.download_button("📥 Baixar Excel", excel_data, f"hist_{unidade_atual}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("📥 Baixar Excel", excel_data, f"hist_{unidade_atual}.xlsx")
     
     st.dataframe(df_hist, use_container_width=True)
