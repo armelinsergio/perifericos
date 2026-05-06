@@ -11,7 +11,7 @@ from PIL import Image
 URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
 SENHA_ADMIN = "admin123"
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
