@@ -5,20 +5,18 @@ from datetime import datetime
 import io
 
 # --- LISTA DE UNIDADES (Edite os nomes aqui) ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
+UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect('estoque_ti.db')
     c = conn.cursor()
     
-    # Criação das tabelas
     c.execute('''CREATE TABLE IF NOT EXISTS produtos 
                  (unidade TEXT, item TEXT, quantidade INTEGER, limite_minimo INTEGER, PRIMARY KEY (unidade, item))''')
     c.execute('''CREATE TABLE IF NOT EXISTS historico 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, unidade TEXT, colaborador TEXT, item TEXT, data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER)''')
     
-    # Migrações automáticas
     c.execute("PRAGMA table_info(produtos)")
     colunas_produtos = [col[1] for col in c.fetchall()]
     if 'unidade' not in colunas_produtos:
@@ -65,15 +63,12 @@ def to_excel(df):
 # --- INTERFACE ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
 
-# Barra Lateral
 st.sidebar.title("🏢 Unidade de Operação")
 unidade_atual = st.sidebar.selectbox("Selecione a Unidade", UNIDADES)
 st.sidebar.divider()
 st.sidebar.title("🎮 Menu Principal")
 menu = ["📊 Dashboard", "📤 Dar Baixa (Saída)", "📥 Reposição (Entrada)", "⚙️ Gerenciar Itens", "📜 Histórico"]
 choice = st.sidebar.selectbox("Selecione uma opção", menu)
-
-# --- LOGICA DAS TELAS ---
 
 if choice == "📊 Dashboard":
     st.title(f"Painel de Controle - {unidade_atual}")
@@ -203,13 +198,22 @@ elif choice == "⚙️ Gerenciar Itens":
 
     with tab6:
         st.subheader("Resetar Inventário Local")
-        st.error(f"⚠️ ATENÇÃO: Isso removerá TODOS os itens cadastrados no estoque de **{unidade_atual}**. Use isso para limpar a unidade e cadastrar apenas o que eles têm.")
+        st.error(f"⚠️ AVISO CRÍTICO: Você está prestes a apagar TODOS os itens do catálogo da unidade **{unidade_atual}**. Esta ação não pode ser desfeita.")
+        
         senha_r = st.text_input("Senha Admin (Reset Unidade)", type="password")
+        
         if senha_r == SENHA_ADMIN:
-            if st.checkbox(f"Eu confirmo que desejo deixar o estoque de {unidade_atual} vazio."):
-                if st.button("EXECUTAR RESET DE UNIDADE"):
+            st.warning("Para liberar o botão de exclusão, digite a palavra **CONFIRMAR** no campo abaixo:")
+            texto_confirmacao = st.text_input("Digite aqui:").strip().upper()
+            
+            if texto_confirmacao == "CONFIRMAR":
+                if st.button("🚨 EXECUTAR RESET IRREVERSÍVEL"):
+                    # Apaga do catálogo
                     run_query("DELETE FROM produtos WHERE unidade = ?", (unidade_atual,), True)
-                    st.success(f"Catálogo de {unidade_atual} foi zerado!")
+                    # Registra a ação no histórico
+                    run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'RESET DE CATÁLOGO', ?, 'LOG', 'ADMIN', 0)", 
+                              (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
+                    st.success(f"O catálogo da unidade {unidade_atual} foi zerado!")
                     st.rerun()
 
 elif choice == "📜 Histórico":
