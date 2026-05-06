@@ -67,7 +67,7 @@ st.markdown("""
 
 # --- LOGÓTIPO CENTRALIZADO ---
 # Usamos colunas largas para centralizar sem "esmagar" a imagem
-col_esq, col_centro, col_dir = st.columns([1, 2, 1])
+col_esq, col_centro, col_dir = st.columns([2, 1, 2])
 with col_centro:
     # O nome deve ser EXATAMENTE igual ao que está no teu screenshot do GitHub
     st.image("logo_totvs_2025_white.png", use_container_width=True)
