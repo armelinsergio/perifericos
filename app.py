@@ -6,7 +6,7 @@ import io
 import os
 
 # --- LISTA DE UNIDADES (Edite os nomes aqui) ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
+UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
@@ -41,7 +41,7 @@ def init_db():
 init_db()
 
 # --- CONFIGURAÇÃO DE SEGURANÇA ---
-SENHA_ADMIN = "admin123"  # <--- Altere sua senha de administrador aqui
+SENHA_ADMIN = "admin123" 
 
 # --- FUNÇÕES DE APOIO ---
 def run_query(query, params=(), commit=False):
@@ -66,7 +66,7 @@ def to_excel(df):
 # --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
 
-# --- ESCONDER MENU, BOTÃO DE DEPLOY E RODAPÉ DO STREAMLIT ---
+# --- ESCONDER MENU DO STREAMLIT ---
 esconder_elementos = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -78,7 +78,6 @@ esconder_elementos = """
 st.markdown(esconder_elementos, unsafe_allow_html=True)
 
 # --- LOGO DA EMPRESA ---
-# Verifica se o arquivo logo.png existe antes de tentar mostrar
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", use_container_width=True)
 
@@ -100,7 +99,7 @@ if choice == "📊 Dashboard":
     conn.close()
 
     if df.empty:
-        st.info(f"Nenhum item cadastrado para {unidade_atual}. Vá em 'Gerenciar Itens' para cadastrar o estoque local.")
+        st.info(f"Nenhum item cadastrado para {unidade_atual}.")
     else:
         itens_zerados = df[df['quantidade'] == 0]
         if not itens_zerados.empty:
@@ -137,7 +136,7 @@ elif choice == "📤 Dar Baixa (Saída)":
     if colaborador and item_selecionado:
         hist = run_query("SELECT data FROM historico WHERE unidade = ? AND colaborador = ? AND item = ? AND tipo = 'SAÍDA'", (unidade_atual, colaborador, item_selecionado))
         if hist:
-            st.warning(f"🛑 CUIDADO: O usuário **{colaborador}** já recebeu este item em {hist[0][0]}.")
+            st.warning(f"🛑 CUIDADO: O usuário **{colaborador}** já recebeu este item anteriormente.")
             if not st.checkbox("Autorizar nova entrega"): bloquear = True
 
     if st.button("Confirmar Baixa") and item_selecionado:
@@ -150,7 +149,10 @@ elif choice == "📤 Dar Baixa (Saída)":
                 run_query("UPDATE produtos SET quantidade = quantidade - ? WHERE unidade = ? AND item = ?", (qtd, unidade_atual, item_selecionado), True)
                 run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
                           (unidade_atual, colaborador, item_selecionado, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", n_chamado, qtd), True)
-                st.success(f"Baixa registrada em {unidade_atual}!")
+                
+                # FEEDBACK DE CONFIRMAÇÃO
+                st.toast(f"✅ Saída Confirmada: {item_selecionado}")
+                st.success(f"Sucesso! {qtd} unidade(s) de {item_selecionado} entregue(s) ao usuário {colaborador}.")
                 st.balloons()
             else: st.error(f"Estoque insuficiente ({saldo} unidades).")
 
@@ -158,7 +160,7 @@ elif choice == "📥 Reposição (Entrada)":
     st.title(f"Entrada de Itens ({unidade_atual})")
     df_itens = pd.DataFrame(run_query("SELECT item FROM produtos WHERE unidade = ? ORDER BY item ASC", (unidade_atual,)), columns=['item'])
     if df_itens.empty:
-        st.warning("Cadastre itens na unidade antes de dar entrada.")
+        st.warning("Cadastre itens antes de dar entrada.")
     else:
         item_add = st.selectbox("Selecione o Item", df_itens['item'].tolist())
         qtd_add = st.number_input("Quantidade Adquirida", min_value=1, step=1)
@@ -166,7 +168,10 @@ elif choice == "📥 Reposição (Entrada)":
             run_query("UPDATE produtos SET quantidade = quantidade + ? WHERE unidade = ? AND item = ?", (qtd_add, unidade_atual, item_add), True)
             run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
                       (unidade_atual, "REPOSIÇÃO", item_add, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "N/A", qtd_add), True)
-            st.success("Estoque atualizado!")
+            
+            # FEEDBACK DE CONFIRMAÇÃO
+            st.toast(f"📥 Reposição Confirmada: {item_add}")
+            st.success(f"Estoque atualizado! Foram adicionadas {qtd_add} unidades de {item_add} em {unidade_atual}.")
 
 elif choice == "⚙️ Gerenciar Itens":
     st.title(f"Gerenciamento - {unidade_atual}")
@@ -179,82 +184,73 @@ elif choice == "⚙️ Gerenciar Itens":
         n_item = st.text_input("Nome do Periférico").strip()
         n_qtd = st.number_input("Qtd Inicial", min_value=0)
         n_lim = st.number_input("Limite de Alerta", min_value=1, value=5)
-        if st.button("Cadastrar"):
-            run_query("INSERT OR IGNORE INTO produtos VALUES (?, ?, ?, ?)", (unidade_atual, n_item, n_qtd, n_lim), True)
-            st.success(f"'{n_item}' cadastrado!")
-            st.rerun()
+        if st.button("Salvar Cadastro"):
+            if n_item:
+                try:
+                    run_query("INSERT INTO produtos VALUES (?, ?, ?, ?)", (unidade_atual, n_item, n_qtd, n_lim), True)
+                    # FEEDBACK DE CONFIRMAÇÃO
+                    st.toast(f"✨ Novo Item Cadastrado: {n_item}")
+                    st.success(f"O item '{n_item}' foi cadastrado com sucesso na unidade {unidade_atual}!")
+                except: st.error("Item já existe nesta unidade.")
+            else: st.error("Digite o nome do periférico.")
 
     with tab2:
         if not df_itens.empty:
             item_edit = st.selectbox("Selecione para editar", df_itens['item'].tolist())
             atual = df_itens[df_itens['item'] == item_edit].iloc[0]
-            nova_qtd_edit = st.number_input("Ajustar Quantidade Atual", value=int(atual['quantidade']))
-            novo_lim_edit = st.number_input("Definir Novo Limite Mínimo", value=int(atual['limite_minimo']))
-            if st.button("Salvar Alterações"):
+            nova_qtd_edit = st.number_input("Quantidade Atual", value=int(atual['quantidade']))
+            novo_lim_edit = st.number_input("Novo Limite Mínimo", value=int(atual['limite_minimo']))
+            if st.button("Atualizar Configurações"):
                 run_query("UPDATE produtos SET quantidade = ?, limite_minimo = ? WHERE unidade = ? AND item = ?", (nova_qtd_edit, novo_lim_edit, unidade_atual, item_edit), True)
-                st.success("Configurações atualizadas!")
-                st.rerun()
+                st.toast("💾 Alterações Salvas!")
+                st.success("Configurações atualizadas com sucesso!")
 
     with tab3:
         if not df_itens.empty:
             item_ren = st.selectbox("Item para renomear", df_itens['item'].tolist(), key="ren1")
             novo_n = st.text_input("Novo nome").strip()
-            if st.button("Confirmar Novo Nome"):
+            if st.button("Confirmar Renomeação"):
                 if novo_n:
                     run_query("UPDATE produtos SET item = ? WHERE unidade = ? AND item = ?", (novo_n, unidade_atual, item_ren), True)
                     run_query("UPDATE historico SET item = ? WHERE unidade = ? AND item = ?", (novo_n, unidade_atual, item_ren), True)
-                    st.success("Item renomeado com sucesso!")
+                    st.toast("📝 Nome Alterado!")
+                    st.success(f"Item renomeado para '{novo_n}' em todos os registros.")
                     st.rerun()
 
     with tab4:
         if not df_itens.empty:
             item_del = st.selectbox("Item para remover", df_itens['item'].tolist(), key="del1")
-            if st.checkbox(f"Confirmo a remoção permanente de {item_del}"):
+            if st.checkbox(f"Confirmo a remoção de {item_del}"):
                 if st.button("Excluir Item"):
                     run_query("DELETE FROM produtos WHERE unidade = ? AND item = ?", (unidade_atual, item_del), True)
-                    st.success("Item removido.")
+                    st.toast("🗑️ Item Removido!")
                     st.rerun()
 
     with tab5:
-        st.subheader("🧹 Limpar Histórico de Movimentações")
-        st.warning("Esta ação apagará todos os registros da aba Histórico para esta unidade. O saldo atual do estoque não será alterado.")
-        
-        senha_h = st.text_input("Senha Admin (Histórico)", type="password", key="pwd_hist")
+        st.subheader("🧹 Limpar Histórico")
+        senha_h = st.text_input("Senha Admin", type="password", key="pwd_hist")
         if senha_h == SENHA_ADMIN:
-            conf_h = st.checkbox("Confirmo que desejo apagar o histórico desta unidade.")
-            if st.button("APAGAR HISTÓRICO AGORA"):
-                if conf_h:
-                    run_query("DELETE FROM historico WHERE unidade = ?", (unidade_atual,), True)
-                    run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'LIMPEZA HISTÓRICO', ?, 'LOG', 'ADMIN', 0)", 
-                              (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
-                    st.success("Histórico limpo!")
-                    st.rerun()
-                else:
-                    st.error("Você precisa marcar a caixa de confirmação.")
+            if st.button("LIMPAR TUDO"):
+                run_query("DELETE FROM historico WHERE unidade = ?", (unidade_atual,), True)
+                run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'LIMPEZA HISTÓRICO', ?, 'LOG', 'ADMIN', 0)", 
+                          (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
+                st.toast("🧹 Histórico Zerado!")
+                st.rerun()
 
     with tab6:
-        st.subheader("🚀 Resetar Catálogo da Unidade")
-        st.error(f"CUIDADO: Isso apagará TODOS os itens e quantidades da unidade {unidade_atual}.")
-        
-        senha_r = st.text_input("Senha Admin (Catálogo)", type="password", key="pwd_cat")
+        st.subheader("🚀 Resetar Catálogo")
+        senha_r = st.text_input("Senha Admin", type="password", key="pwd_cat")
         if senha_r == SENHA_ADMIN:
-            st.info("Para confirmar, digite a palavra **CONFIRMAR**:")
-            palavra_c = st.text_input("Palavra de confirmação:").strip().upper()
+            palavra_c = st.text_input("Digite CONFIRMAR:").strip().upper()
             if palavra_c == "CONFIRMAR":
-                if st.button("RESETAR CATÁLOGO IRREVERSIVELMENTE"):
+                if st.button("RESETAR AGORA"):
                     run_query("DELETE FROM produtos WHERE unidade = ?", (unidade_atual,), True)
-                    run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'RESET DE CATÁLOGO', ?, 'LOG', 'ADMIN', 0)", 
-                              (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
-                    st.success("Unidade resetada!")
+                    st.toast("🚀 Catálogo Resetado!")
                     st.rerun()
 
 elif choice == "📜 Histórico":
     st.title(f"Histórico - {unidade_atual}")
-    
-    col_busca, col_excel = st.columns([3, 1])
-    with col_busca:
-        busca = st.text_input("🔍 Buscar (Usuário, Item ou Chamado)").strip().upper()
-    
+    busca = st.text_input("🔍 Buscar").strip().upper()
     conn = sqlite3.connect('estoque_ti.db')
     df_hist = pd.read_sql_query(f"SELECT colaborador, item, quantidade, data, tipo, chamado FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
     conn.close()
@@ -264,9 +260,10 @@ elif choice == "📜 Histórico":
                           df_hist['item'].str.upper().str.contains(busca, na=False) | 
                           df_hist['chamado'].str.contains(busca, na=False)]
     
-    with col_excel:
+    col1, col2 = st.columns([4, 1])
+    with col2:
         if not df_hist.empty:
             excel_data = to_excel(df_hist)
-            st.download_button("📥 Baixar Excel", excel_data, f"hist_{unidade_atual}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("📥 Baixar Excel", excel_data, f"hist_{unidade_atual}.xlsx")
     
     st.dataframe(df_hist, use_container_width=True)
