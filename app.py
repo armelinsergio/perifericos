@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import io
+import os
 
 # --- LISTA DE UNIDADES (Edite os nomes aqui) ---
 UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
@@ -40,7 +41,7 @@ def init_db():
 init_db()
 
 # --- CONFIGURAÇÃO DE SEGURANÇA ---
-SENHA_ADMIN = "admin123"  # <--- Altere sua senha aqui
+SENHA_ADMIN = "admin123"  # <--- Altere sua senha de administrador aqui
 
 # --- FUNÇÕES DE APOIO ---
 def run_query(query, params=(), commit=False):
@@ -62,13 +63,30 @@ def to_excel(df):
     writer.close()
     return output.getvalue()
 
-# --- INTERFACE ---
+# --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
 
-# Barra Lateral
+# --- ESCONDER MENU, BOTÃO DE DEPLOY E RODAPÉ DO STREAMLIT ---
+esconder_elementos = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stAppDeployButton"] {display: none;}
+    </style>
+"""
+st.markdown(esconder_elementos, unsafe_allow_html=True)
+
+# --- LOGO DA EMPRESA ---
+# Verifica se o arquivo logo.png existe antes de tentar mostrar
+if os.path.exists("logo.png"):
+    st.sidebar.image("logo.png", use_container_width=True)
+
+# --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade de Operação")
 unidade_atual = st.sidebar.selectbox("Selecione a Unidade", UNIDADES)
 st.sidebar.divider()
+
 st.sidebar.title("🎮 Menu Principal")
 menu = ["📊 Dashboard", "📤 Dar Baixa (Saída)", "📥 Reposição (Entrada)", "⚙️ Gerenciar Itens", "📜 Histórico"]
 choice = st.sidebar.selectbox("Selecione uma opção", menu)
@@ -154,7 +172,6 @@ elif choice == "⚙️ Gerenciar Itens":
     st.title(f"Gerenciamento - {unidade_atual}")
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🆕 Cadastrar", "✏️ Editar Limites", "📝 Renomear", "🗑️ Remover", "🧹 Zerar Histórico", "🚀 Resetar Unidade"])
     
-    # Carrega dados para uso nas abas
     df_itens = pd.DataFrame(run_query("SELECT * FROM produtos WHERE unidade = ? ORDER BY item ASC", (unidade_atual,)), columns=['unidade', 'item', 'quantidade', 'limite_minimo'])
 
     with tab1:
@@ -208,7 +225,6 @@ elif choice == "⚙️ Gerenciar Itens":
             if st.button("APAGAR HISTÓRICO AGORA"):
                 if conf_h:
                     run_query("DELETE FROM historico WHERE unidade = ?", (unidade_atual,), True)
-                    # Gera log de limpeza
                     run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'LIMPEZA HISTÓRICO', ?, 'LOG', 'ADMIN', 0)", 
                               (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
                     st.success("Histórico limpo!")
@@ -227,7 +243,6 @@ elif choice == "⚙️ Gerenciar Itens":
             if palavra_c == "CONFIRMAR":
                 if st.button("RESETAR CATÁLOGO IRREVERSIVELMENTE"):
                     run_query("DELETE FROM produtos WHERE unidade = ?", (unidade_atual,), True)
-                    # Registra log
                     run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, 'SISTEMA', 'RESET DE CATÁLOGO', ?, 'LOG', 'ADMIN', 0)", 
                               (unidade_atual, datetime.now().strftime("%d/%m/%Y %H:%M")), True)
                     st.success("Unidade resetada!")
