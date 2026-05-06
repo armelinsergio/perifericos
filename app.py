@@ -6,7 +6,7 @@ import io
 import os
 
 # --- LISTA DE UNIDADES ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
