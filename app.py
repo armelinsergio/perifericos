@@ -7,13 +7,17 @@ from datetime import datetime
 def init_db():
     conn = sqlite3.connect('estoque_ti.db')
     c = conn.cursor()
+    # Tabela de Produtos
     c.execute('''CREATE TABLE IF NOT EXISTS produtos 
                  (item TEXT PRIMARY KEY, quantidade INTEGER, limite_minimo INTEGER)''')
+    # Tabela de Histórico
     c.execute('''CREATE TABLE IF NOT EXISTS historico 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, colaborador TEXT, item TEXT, data TEXT, tipo TEXT, chamado TEXT)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, colaborador TEXT, item TEXT, data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER)''')
     
-    # Garantir que a coluna chamado existe
+    # Migrações automáticas (Adiciona colunas se não existirem)
     try: c.execute("ALTER TABLE historico ADD COLUMN chamado TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE historico ADD COLUMN quantidade INTEGER")
     except: pass
     
     conn.commit()
@@ -48,20 +52,17 @@ if choice == "📊 Dashboard":
     df = pd.read_sql_query("SELECT * FROM produtos ORDER BY item ASC", conn)
     conn.close()
 
-    # 1. SEÇÃO DE ITENS ZERADOS (Crítico)
+    # 1. SEÇÃO DE ITENS ZERADOS
     itens_zerados = df[df['quantidade'] == 0]
     if not itens_zerados.empty:
         st.error("### 🚨 ITENS TOTALMENTE ZERADOS")
         st.table(itens_zerados[['item', 'quantidade']])
         
-    # 2. SEÇÃO DE REPOSIÇÃO (Abaixo do limite definido)
-    # Filtra itens que não estão zerados, mas estão abaixo ou igual ao limite
+    # 2. SEÇÃO DE REPOSIÇÃO
     reposicao = df[(df['quantidade'] <= df['limite_minimo']) & (df['quantidade'] > 0)]
     if not reposicao.empty:
         st.warning("### ⚠️ NECESSIDADE DE REPOSIÇÃO (Estoque Baixo)")
         st.dataframe(reposicao, use_container_width=True)
-        
-        # Botão para exportar lista de compras
         csv = reposicao.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Baixar Lista de Compras (CSV)", csv, "lista_compras.csv", "text/csv")
 
@@ -78,7 +79,7 @@ elif choice == "📤 Dar Baixa (Saída)":
     with col2:
         df_itens = pd.DataFrame(run_query("SELECT item FROM produtos ORDER BY item ASC"), columns=['item'])
         item_selecionado = st.selectbox("Selecione o Periférico", df_itens['item'].tolist())
-        qtd = st.number_input("Quantidade", min_value=1, step=1)
+        qtd = st.number_input("Quantidade a Entregar", min_value=1, step=1)
 
     bloquear = False
     if colaborador:
@@ -94,9 +95,10 @@ elif choice == "📤 Dar Baixa (Saída)":
             saldo = run_query("SELECT quantidade FROM produtos WHERE item = ?", (item_selecionado,))[0][0]
             if saldo >= qtd:
                 run_query("UPDATE produtos SET quantidade = quantidade - ? WHERE item = ?", (qtd, item_selecionado), True)
-                run_query("INSERT INTO historico (colaborador, item, data, tipo, chamado) VALUES (?, ?, ?, ?, ?)", 
-                          (colaborador, item_selecionado, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", n_chamado), True)
-                st.success(f"Baixa efetuada! Chamado: {n_chamado}")
+                # GRAVAÇÃO COM QUANTIDADE NO HISTÓRICO
+                run_query("INSERT INTO historico (colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?)", 
+                          (colaborador, item_selecionado, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", n_chamado, qtd), True)
+                st.success(f"Baixa de {qtd} unidade(s) efetuada! Chamado: {n_chamado}")
                 st.balloons()
             else: st.error(f"Estoque insuficiente ({saldo} unidades).")
 
@@ -107,9 +109,10 @@ elif choice == "📥 Reposição (Entrada)":
     qtd_add = st.number_input("Quantidade Adquirida", min_value=1, step=1)
     if st.button("Adicionar ao Estoque"):
         run_query("UPDATE produtos SET quantidade = quantidade + ? WHERE item = ?", (qtd_add, item_add), True)
-        run_query("INSERT INTO historico (colaborador, item, data, tipo, chamado) VALUES (?, ?, ?, ?, ?)", 
-                  ("REPOSIÇÃO", item_add, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "N/A"), True)
-        st.success("Estoque atualizado!")
+        # GRAVAÇÃO COM QUANTIDADE NO HISTÓRICO
+        run_query("INSERT INTO historico (colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?)", 
+                  ("REPOSIÇÃO", item_add, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "N/A", qtd_add), True)
+        st.success(f"Entrada de {qtd_add} unidades de {item_add} registrada!")
 
 elif choice == "⚙️ Gerenciar Itens":
     st.title("Gerenciamento do Catálogo")
@@ -130,15 +133,12 @@ elif choice == "⚙️ Gerenciar Itens":
         st.subheader("Alterar Limite Mínimo ou Quantidade")
         df_itens = pd.DataFrame(run_query("SELECT * FROM produtos ORDER BY item ASC"), columns=['item', 'quantidade', 'limite_minimo'])
         item_edit = st.selectbox("Selecione para editar", df_itens['item'].tolist())
-        
-        # Busca valores atuais
         atual = df_itens[df_itens['item'] == item_edit].iloc[0]
         nova_qtd_edit = st.number_input("Ajustar Quantidade Atual", value=int(atual['quantidade']))
         novo_lim_edit = st.number_input("Definir Novo Limite Mínimo", value=int(atual['limite_minimo']))
-        
         if st.button("Atualizar Configurações"):
             run_query("UPDATE produtos SET quantidade = ?, limite_minimo = ? WHERE item = ?", (nova_qtd_edit, novo_lim_edit, item_edit), True)
-            st.success(f"Configurações de '{item_edit}' atualizadas!")
+            st.success("Atualizado!")
             st.rerun()
 
     with tab3:
@@ -154,8 +154,10 @@ elif choice == "📜 Histórico":
     st.title("Histórico de Movimentações")
     busca = st.text_input("🔍 Buscar (Usuário, Item ou Chamado)").strip().upper()
     conn = sqlite3.connect('estoque_ti.db')
-    df_hist = pd.read_sql_query("SELECT colaborador, item, data, tipo, chamado FROM historico ORDER BY id DESC", conn)
+    # ADICIONADO A COLUNA QUANTIDADE NA CONSULTA
+    df_hist = pd.read_sql_query("SELECT colaborador, item, quantidade, data, tipo, chamado FROM historico ORDER BY id DESC", conn)
     conn.close()
     if busca:
         df_hist = df_hist[df_hist['colaborador'].str.contains(busca) | df_hist['item'].str.upper().str.contains(busca) | df_hist['chamado'].str.contains(busca)]
+    
     st.dataframe(df_hist, use_container_width=True)
