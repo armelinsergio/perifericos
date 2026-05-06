@@ -64,25 +64,35 @@ def to_excel(df):
     return output.getvalue()
 
 # --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
-st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
+# O comando initial_sidebar_state="expanded" força o menu a abrir
+st.set_page_config(page_title="Controle de Periféricos TI", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESCONDER MENU, BOTÃO DE DEPLOY E RODAPÉ (MANTENDO A SETA DO MENU LATERAL) ---
+# --- ESCONDER MENU, BOTÃO DE DEPLOY E RODAPÉ (MANTENDO A SETA) ---
 esconder_elementos = """
     <style>
+    /* Esconde o menu de três pontinhos */
     #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* Esconde o botão de Deploy */
     [data-testid="stAppDeployButton"] {display: none;}
-    [data-testid="stToolbar"] {display: none;}
+    /* Esconde as ferramentas do canto superior direito (como o ícone do GitHub) */
+    [data-testid="stToolbar"] {visibility: hidden;}
+    /* Esconde o rodapé */
+    footer {visibility: hidden;}
+    /* Esconde a barra colorida */
     [data-testid="stDecoration"] {display: none;}
+    /* GARANTE QUE A SETA DA BARRA LATERAL FIQUE VISÍVEL */
+    [data-testid="collapsedControl"] {visibility: visible !important; display: flex !important;}
     </style>
 """
 st.markdown(esconder_elementos, unsafe_allow_html=True)
 
 # --- LOGO DA EMPRESA (TOTVS) ---
-# O sistema vai procurar exatamente por este nome de arquivo
-nome_do_logo = "logo_totvs_2025_white.png"
-if os.path.exists(nome_do_logo):
-    st.sidebar.image(nome_do_logo, use_container_width=True)
+try:
+    # Tenta carregar a imagem diretamente
+    st.sidebar.image("logo_totvs_2025_white.png", use_container_width=True)
+except Exception as e:
+    # Se der erro, mostra um aviso na tela para ajudar a consertar
+    st.sidebar.warning("⚠️ Logo não carregado. Verifique se o arquivo 'logo_totvs_2025_white.png' está no GitHub exatamente com este nome.")
 
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade de Operação")
@@ -190,6 +200,7 @@ elif choice == "⚙️ Gerenciar Itens":
                     run_query("INSERT INTO produtos VALUES (?, ?, ?, ?)", (unidade_atual, n_item, n_qtd, n_lim), True)
                     st.toast(f"✨ Novo Item Cadastrado: {n_item}")
                     st.success(f"O item '{n_item}' foi cadastrado com sucesso na unidade {unidade_atual}!")
+                    st.rerun()
                 except: st.error("Item já existe nesta unidade.")
             else: st.error("Digite o nome do periférico.")
 
