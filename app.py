@@ -4,9 +4,10 @@ import psycopg2
 from datetime import datetime
 import io
 from PIL import Image
+import time
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
+UNIDADES = ["MATRIZ", "BELO HORIZONTE", "JOINVILLE", "RIO DE JANEIRO"]
 SENHA_ADMIN = "admin123"
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
@@ -24,8 +25,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXÃO COM O BANCO DE DADOS (NEON) ---
+# --- CONEXÃO OTIMIZADA (CACHE) ---
+@st.cache_resource
 def get_connection():
+    # Mantém a conexão aberta para evitar lentidão
     return psycopg2.connect(st.secrets["PG_URL"])
 
 def init_db():
@@ -33,30 +36,20 @@ def init_db():
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS produtos (
-            unidade TEXT,
-            item TEXT,
-            quantidade INTEGER,
-            limite_minimo INTEGER,
+            unidade TEXT, item TEXT, quantidade INTEGER, limite_minimo INTEGER,
             PRIMARY KEY (unidade, item)
         );
         CREATE TABLE IF NOT EXISTS historico (
-            id SERIAL PRIMARY KEY,
-            unidade TEXT,
-            colaborador TEXT,
-            item TEXT,
-            data TEXT,
-            tipo TEXT,
-            chamado TEXT,
-            quantidade INTEGER
+            id SERIAL PRIMARY KEY, unidade TEXT, colaborador TEXT, item TEXT,
+            data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER
         );
     """)
     conn.commit()
     cur.close()
-    conn.close()
 
 init_db()
 
-# --- FUNÇÕES ÚTEIS ---
+# --- FUNÇÕES DE APOIO ---
 def to_excel(df):
     output = io.BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
@@ -71,7 +64,7 @@ with col_centro:
         logo = Image.open("logo_totvs_2025_white.png")
         st.image(logo, use_container_width=True)
     except:
-        st.warning("⚠️ Logo não carregado. Verifique o arquivo.")
+        st.warning("⚠️ Logo não carregado.")
 
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade")
@@ -86,24 +79,20 @@ if choice == "📊 Dashboard":
     st.header(f"Painel de Controle - {unidade_atual}")
     conn = get_connection()
     df_u = pd.read_sql(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-    conn.close()
 
     if df_u.empty:
-        st.info("Nenhum item cadastrado para esta unidade.")
+        st.info("Nenhum item cadastrado.")
     else:
-        # 1. ESTOQUE ZERADO
         df_zerado = df_u[df_u['quantidade'] <= 0]
         if not df_zerado.empty:
             st.error("### 🔴 ESTOQUE ZERADO")
             st.dataframe(df_zerado, use_container_width=True)
         
-        # 2. LIMITE ATINGIDO
         df_limite = df_u[(df_u['quantidade'] > 0) & (df_u['quantidade'] <= df_u['limite_minimo'])]
         if not df_limite.empty:
             st.warning("### 🟡 LIMITE MÍNIMO ATINGIDO")
             st.dataframe(df_limite, use_container_width=True)
 
-        # 3. ESTOQUE OK
         df_ok = df_u[df_u['quantidade'] > df_u['limite_minimo']]
         if not df_ok.empty:
             st.success("### 🟢 ESTOQUE SAUDÁVEL")
@@ -133,13 +122,11 @@ elif choice == "📤 Saída":
                                     (unidade_atual, user, it_sel, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", cham, q_sai))
                         conn.commit()
                         cur.close()
-                        st.toast(f"✅ Saída registrada!")
-                        st.success(f"Registrado: {q_sai}x {it_sel} para {user}")
-                        st.balloons()
+                        st.toast(f"✅ Saída registrada: {q_sai}x {it_sel}", icon="✅")
+                        time.sleep(1) # Pequena pausa para o usuário ver o processamento
+                        st.rerun()
                     else: st.error("Estoque insuficiente.")
                 else: st.error("Preencha todos os campos.")
-        else: st.warning("Nenhum item cadastrado.")
-    conn.close()
 
 elif choice == "📥 Entrada":
     st.header(f"Entrada de Material - {unidade_atual}")
@@ -156,10 +143,9 @@ elif choice == "📥 Entrada":
                         (unidade_atual, "SISTEMA", it_ent, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "REPOSIÇÃO", q_ent))
             conn.commit()
             cur.close()
-            st.toast("📥 Estoque Atualizado!")
-            st.success(f"Sucesso: {q_ent} unidades adicionadas.")
-    else: st.warning("Nenhum item cadastrado.")
-    conn.close()
+            st.toast(f"📥 Estoque de {it_ent} atualizado!", icon="📥")
+            time.sleep(1)
+            st.rerun()
 
 elif choice == "⚙️ Gestão":
     st.header(f"Gerenciamento - {unidade_atual}")
@@ -179,16 +165,17 @@ elif choice == "⚙️ Gestão":
                                 (unidade_atual, "SISTEMA", n_it, datetime.now().strftime("%d/%m/%Y %H:%M"), "CADASTRO", "N/A", n_q))
                     conn.commit()
                     cur.close()
-                    st.success(f"Item {n_it} cadastrado com sucesso!")
+                    st.toast(f"✨ {n_it} cadastrado com sucesso!", icon="✨")
+                    time.sleep(1)
+                    st.rerun()
                 except Exception as e:
-                    st.error("Este item já existe ou ocorreu um erro.")
+                    st.error("Este item já existe.")
                     conn.rollback()
-                st.rerun()
 
     with t2:
         df_itens = pd.read_sql(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
         if not df_itens.empty:
-            it_edit = st.selectbox("Editar configurações de:", df_itens['item'].tolist(), key="edit1")
+            it_edit = st.selectbox("Editar configurações de:", df_itens['item'].tolist())
             linha = df_itens[df_itens['item'] == it_edit].iloc[0]
             nova_q = st.number_input("Nova Quantidade", value=int(linha['quantidade']))
             novo_m = st.number_input("Novo Limite Mínimo", value=int(linha['limite_minimo']))
@@ -197,13 +184,14 @@ elif choice == "⚙️ Gestão":
                 cur.execute("UPDATE produtos SET quantidade = %s, limite_minimo = %s WHERE unidade = %s AND item = %s", (nova_q, novo_m, unidade_atual, it_edit))
                 conn.commit()
                 cur.close()
-                st.success("Configurações atualizadas!")
+                st.toast("💾 Ajustes salvos!", icon="💾")
+                time.sleep(1)
                 st.rerun()
 
     with t3:
-        df_itens2 = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-        if not df_itens2.empty:
-            it_ren = st.selectbox("Item para renomear:", df_itens2['item'].tolist(), key="ren1")
+        df_ren = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
+        if not df_ren.empty:
+            it_ren = st.selectbox("Item para renomear:", df_ren['item'].tolist())
             novo_nome = st.text_input("Novo Nome").upper()
             if st.button("Confirmar Renomeação"):
                 if novo_nome:
@@ -212,58 +200,57 @@ elif choice == "⚙️ Gestão":
                     cur.execute("UPDATE historico SET item = %s WHERE unidade = %s AND item = %s", (novo_nome, unidade_atual, it_ren))
                     conn.commit()
                     cur.close()
-                    st.success(f"Item renomeado para {novo_nome}!")
+                    st.toast("📝 Nome atualizado!", icon="📝")
+                    time.sleep(1)
                     st.rerun()
 
     with t4:
-        df_itens3 = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-        if not df_itens3.empty:
-            it_rem = st.selectbox("Escolha o item para remover", df_itens3['item'].tolist(), key="rem1")
-            if st.checkbox(f"Confirmo a remoção definitiva de {it_rem}"):
+        df_rem = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
+        if not df_rem.empty:
+            it_rem = st.selectbox("Escolha o item para remover", df_rem['item'].tolist())
+            if st.checkbox(f"Confirmo a remoção de {it_rem}"):
                 if st.button("Remover Agora"):
                     cur = conn.cursor()
                     cur.execute("DELETE FROM produtos WHERE unidade = %s AND item = %s", (unidade_atual, it_rem))
                     conn.commit()
                     cur.close()
+                    st.toast("🗑️ Item removido!", icon="🗑️")
+                    time.sleep(1)
                     st.rerun()
 
     with t5:
-        st.subheader("Limpar Histórico")
-        senha_h = st.text_input("Senha Admin (Histórico)", type="password", key="sh1")
+        senha_h = st.text_input("Senha Admin (Histórico)", type="password")
         if senha_h == SENHA_ADMIN:
-            if st.button("Apagar Histórico desta Unidade"):
+            if st.button("Apagar Histórico da Unidade"):
                 cur = conn.cursor()
                 cur.execute("DELETE FROM historico WHERE unidade = %s", (unidade_atual,))
                 conn.commit()
                 cur.close()
-                st.success("Histórico limpo!")
+                st.toast("🧹 Histórico zerado!", icon="🧹")
+                time.sleep(1)
                 st.rerun()
 
     with t6:
-        st.error("⚠️ ZONA DE PERIGO: Reset de Catálogo")
-        senha_r = st.text_input("Senha Admin (Reset)", type="password", key="sr1")
+        st.error("⚠️ RESET TOTAL")
+        senha_r = st.text_input("Senha Admin (Reset)", type="password")
         if senha_r == SENHA_ADMIN:
             if st.text_input("Digite CONFIRMAR:").upper() == "CONFIRMAR":
-                if st.button("ZERAR CATÁLOGO DESTA UNIDADE"):
+                if st.button("ZERAR CATÁLOGO"):
                     cur = conn.cursor()
                     cur.execute("DELETE FROM produtos WHERE unidade = %s", (unidade_atual,))
-                    cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                                (unidade_atual, "SISTEMA", "RESET DE CATÁLOGO", datetime.now().strftime("%d/%m/%Y %H:%M"), "LOG", "ADMIN", 0))
                     conn.commit()
                     cur.close()
-                    st.success("Catálogo resetado com sucesso!")
+                    st.toast("🚀 Catálogo resetado!", icon="🚀")
+                    time.sleep(1)
                     st.rerun()
-    conn.close()
 
 elif choice == "📜 Histórico":
-    st.header(f"Histórico de Movimentações - {unidade_atual}")
+    st.header(f"Histórico - {unidade_atual}")
     conn = get_connection()
     df_h = pd.read_sql(f"SELECT colaborador, item, quantidade, data, tipo, chamado FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
-    conn.close()
     
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
-        excel_data = to_excel(df_h)
-        st.download_button("📥 Baixar Histórico (Excel)", excel_data, f"hist_{unidade_atual}.xlsx", "application/vnd.ms-excel")
+        st.download_button("📥 Baixar Excel", to_excel(df_h), f"hist_{unidade_atual}.xlsx")
     else:
-        st.info("Nenhuma movimentação registrada.")
+        st.info("Nenhuma movimentação.")
