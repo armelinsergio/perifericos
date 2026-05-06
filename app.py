@@ -66,11 +66,10 @@ def to_excel(df):
 # --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
 
-# --- ESCONDER MENU, BOTÃO DE DEPLOY, GITHUB E RODAPÉ ---
+# --- ESCONDER MENU, BOTÃO DE DEPLOY E RODAPÉ (MANTENDO A SETA DO MENU LATERAL) ---
 esconder_elementos = """
     <style>
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stAppDeployButton"] {display: none;}
     [data-testid="stToolbar"] {display: none;}
@@ -79,9 +78,11 @@ esconder_elementos = """
 """
 st.markdown(esconder_elementos, unsafe_allow_html=True)
 
-# --- LOGO DA EMPRESA ---
-if os.path.exists("logo.png"):
-    st.sidebar.image("logo.png", use_container_width=True)
+# --- LOGO DA EMPRESA (TOTVS) ---
+# O sistema vai procurar exatamente por este nome de arquivo
+nome_do_logo = "logo_totvs_2025_white.png"
+if os.path.exists(nome_do_logo):
+    st.sidebar.image(nome_do_logo, use_container_width=True)
 
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade de Operação")
