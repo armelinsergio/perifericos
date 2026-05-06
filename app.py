@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 
 # --- LISTA DE UNIDADES (Edite os nomes aqui) ---
-UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
