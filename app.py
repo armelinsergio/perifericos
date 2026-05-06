@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 import io
 import os
+from PIL import Image
 
 # --- LISTA DE UNIDADES (Edite os nomes aqui) ---
 UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
@@ -79,12 +80,15 @@ st.markdown(esconder_elementos, unsafe_allow_html=True)
 
 # --- LOGÓTIPO CENTRALIZADO NO TOPO DA PÁGINA ---
 try:
+    # O PIL abre a imagem de forma nativa, contornando erros de leitura do Streamlit
+    logo = Image.open("logo_totvs_2025_white.png")
+    
     # As colunas ajudam a manter a imagem centrada e no tamanho ideal
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.image("logo_totvs_2025_white.png", use_container_width=True)
+        st.image(logo, use_container_width=True)
 except Exception as e:
-    st.sidebar.error(f"⚠️ Erro ao carregar o logótipo. Confirme o ficheiro.")
+    st.error(f"⚠️ Erro ao carregar o logótipo: {e}")
 
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade")
