@@ -5,13 +5,11 @@ import io
 from PIL import Image
 import time
 from sqlalchemy import text
-import pytz # Importação para fuso horário
+import pytz
 
 # --- CONFIGURAÇÕES INICIAIS ---
 UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
 SENHA_ADMIN = "admin123"
-
-# Configuração do Fuso Horário de Brasília
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
@@ -52,29 +50,37 @@ init_db()
 
 # --- FUNÇÕES DE APOIO ---
 def get_data_br():
-    # Retorna a data/hora atual formatada para Brasília
     return datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
 
-def to_excel_historico(df):
+# FUNÇÃO MESTRE DE FORMATAÇÃO EXCEL
+def gerar_excel_formatado(df, nome_aba, titulo):
     output = io.BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    df.to_excel(writer, index=False, sheet_name='Histórico')
-    writer.close()
-    return output.getvalue()
-
-def to_excel_compras(df, unidade):
-    output = io.BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    df.to_excel(writer, index=False, sheet_name='Lista de Compras', startrow=3)
+    
+    # Inicia a planilha na linha 4 para dar espaço ao título
+    df.to_excel(writer, index=False, sheet_name=nome_aba, startrow=3)
+    
     workbook = writer.book
-    worksheet = writer.sheets['Lista de Compras']
-    fmt_titulo = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#FFFFFF', 'bg_color': '#000000', 'align': 'center'})
-    fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
-    worksheet.merge_range('A1:C2', f'SOLICITAÇÃO DE COMPRAS - {unidade}', fmt_titulo)
-    worksheet.write('A3', f'Gerado em: {get_data_br()}')
+    worksheet = writer.sheets[nome_aba]
+
+    # DEFINIÇÃO DE ESTILOS
+    fmt_titulo = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#FFFFFF', 'bg_color': '#000000', 'align': 'center', 'valign': 'vcenter', 'border': 1})
+    fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
+    fmt_comum = workbook.add_format({'border': 1, 'align': 'left'})
+    fmt_data = workbook.add_format({'italic': True, 'font_size': 10})
+
+    # ESCREVER TÍTULO E DATA DE GERAÇÃO
+    worksheet.merge_range('A1:G2', titulo, fmt_titulo)
+    worksheet.write('A3', f'Relatório extraído em: {get_data_br()}', fmt_data)
+
+    # AJUSTAR CABEÇALHOS E COLUNAS
     for i, col in enumerate(df.columns):
-        worksheet.set_column(i, i, 25)
+        # Ajusta largura da coluna (mínimo 15, máximo 35)
+        largura = max(len(col) + 5, 18)
+        worksheet.set_column(i, i, largura)
+        # Reaplica o formato de cabeçalho na linha 4
         worksheet.write(3, i, col, fmt_header)
+
     writer.close()
     return output.getvalue()
 
@@ -118,19 +124,18 @@ if choice == "📊 Dashboard":
             st.success("### 🟢 ESTOQUE SAUDÁVEL")
             st.dataframe(df_ok, use_container_width=True)
         
+        # EXCEL DE COMPRAS FORMATADO
         df_compra = pd.concat([df_zerado, df_limite])
         if not df_compra.empty:
             st.divider()
             st.markdown("#### 🛒 Reposição de Estoque")
-            excel_compra = to_excel_compras(df_compra, unidade_atual)
+            excel_compra = gerar_excel_formatado(df_compra, "Lista de Compras", f"SOLICITAÇÃO DE COMPRAS - {unidade_atual}")
             st.download_button(label="📥 Baixar Lista de Compras Formatada", data=excel_compra,
                                file_name=f"compras_{unidade_atual}.xlsx", mime="application/vnd.ms-excel")
 
 elif choice == "📤 Saída":
     st.header(f"Registrar Entrega - {unidade_atual}")
-    df_itens = conn.query("SELECT item, quantidade FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
-                          params={"unid": unidade_atual}, ttl=0)
-    
+    df_itens = conn.query("SELECT item, quantidade FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
     c1, col2 = st.columns(2)
     with c1:
         user = st.text_input("Colaborador").upper()
@@ -144,8 +149,7 @@ elif choice == "📤 Saída":
                     saldo = df_itens.loc[df_itens['item'] == it_sel, 'quantidade'].values[0]
                     if saldo >= q_sai:
                         with conn.session as s:
-                            s.execute(text("UPDATE produtos SET quantidade = quantidade - :q WHERE unidade = :unid AND item = :it"), 
-                                      {"q": q_sai, "unid": unidade_atual, "it": it_sel})
+                            s.execute(text("UPDATE produtos SET quantidade = quantidade - :q WHERE unidade = :unid AND item = :it"), {"q": q_sai, "unid": unidade_atual, "it": it_sel})
                             s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, :user, :it, :dt, 'SAÍDA', :ch, :q, 'N/A')"),
                                       {"unid": unidade_atual, "user": user, "it": it_sel, "dt": get_data_br(), "ch": cham, "q": q_sai})
                             s.commit()
@@ -156,8 +160,7 @@ elif choice == "📤 Saída":
 
 elif choice == "📥 Entrada":
     st.header(f"Entrada de Material (Reposição) - {unidade_atual}")
-    df_itens = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
-                          params={"unid": unidade_atual}, ttl=0)
+    df_itens = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
     c1, c2 = st.columns(2)
     with c1:
         if not df_itens.empty:
@@ -168,8 +171,7 @@ elif choice == "📥 Entrada":
     if st.button("Confirmar Entrada"):
         if nf_ent:
             with conn.session as s:
-                s.execute(text("UPDATE produtos SET quantidade = quantidade + :q WHERE unidade = :unid AND item = :it"), 
-                          {"q": q_ent, "unid": unidade_atual, "it": it_ent})
+                s.execute(text("UPDATE produtos SET quantidade = quantidade + :q WHERE unidade = :unid AND item = :it"), {"q": q_ent, "unid": unidade_atual, "it": it_ent})
                 s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'ENTRADA', 'REPOSIÇÃO', :q, :nf)"),
                           {"unid": unidade_atual, "it": it_ent, "dt": get_data_br(), "q": q_ent, "nf": nf_ent})
                 s.commit()
@@ -188,8 +190,7 @@ elif choice == "⚙️ Gestão":
         if st.button("Salvar Cadastro"):
             if n_it:
                 with conn.session as s:
-                    s.execute(text("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:unid, :it, :q, :m)"), 
-                              {"unid": unidade_atual, "it": n_it, "q": n_q, "m": n_m})
+                    s.execute(text("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:unid, :it, :q, :m)"), {"unid": unidade_atual, "it": n_it, "q": n_q, "m": n_m})
                     s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'CADASTRO', 'N/A', :q, :nf)"),
                               {"unid": unidade_atual, "it": n_it, "dt": get_data_br(), "q": n_q, "nf": n_nf if n_nf else "N/A"})
                     s.commit()
@@ -206,8 +207,7 @@ elif choice == "⚙️ Gestão":
             nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']))
             if st.button("Salvar Ajustes"):
                 with conn.session as s:
-                    s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it"), 
-                              {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
+                    s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it"), {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
                     s.commit()
                 st.toast("💾 Salvo!")
                 time.sleep(0.5)
@@ -216,7 +216,7 @@ elif choice == "⚙️ Gestão":
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
     busca = st.text_input("🔍 Buscar por Colaborador, Item ou Chamado").upper()
-    query_hist = "SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = :unid"
+    query_hist = "SELECT colaborador as \"Colaborador\", item as \"Item\", quantidade as \"Qtd\", nf as \"NF\", data as \"Data/Hora\", tipo as \"Operação\", chamado as \"Ticket\" FROM historico WHERE unidade = :unid"
     params_hist = {"unid": unidade_atual}
     if busca:
         query_hist += " AND (colaborador ILIKE :b OR item ILIKE :b OR chamado ILIKE :b)"
@@ -225,6 +225,8 @@ elif choice == "📜 Histórico":
     df_h = conn.query(query_hist, params=params_hist, ttl=0)
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
-        st.download_button("📥 Baixar Histórico Completo", to_excel_historico(df_h), f"hist_{unidade_atual}.xlsx")
+        # EXCEL DE HISTÓRICO FORMATADO
+        excel_hist = gerar_excel_formatado(df_h, "Histórico", f"RELATÓRIO DE MOVIMENTAÇÃO - {unidade_atual}")
+        st.download_button("📥 Baixar Histórico Formatado (Excel)", excel_hist, f"historico_{unidade_atual}.xlsx")
     else:
         st.info("Nenhuma movimentação encontrada.")
