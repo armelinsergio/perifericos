@@ -6,7 +6,7 @@ import io
 from PIL import Image
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
 SENHA_ADMIN = "admin123"
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
