@@ -5,3 +5,4 @@ Pillow
 st-gsheets-connection
 psycopg2-binary
 SQLAlchemy
+pytz
