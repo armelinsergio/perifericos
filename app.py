@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
+import io
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
@@ -12,7 +13,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS historico 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, colaborador TEXT, item TEXT, data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER)''')
     
-    # Migrações automáticas
+    # Migrações automáticas para colunas novas
     try: c.execute("ALTER TABLE historico ADD COLUMN chamado TEXT")
     except: pass
     try: c.execute("ALTER TABLE historico ADD COLUMN quantidade INTEGER")
@@ -24,9 +25,9 @@ def init_db():
 init_db()
 
 # --- CONFIGURAÇÃO DE SEGURANÇA ---
-SENHA_ADMIN = "admin123" # <--- VOCÊ PODE ALTERAR A SUA SENHA AQUI
+SENHA_ADMIN = "admin123" 
 
-# --- FUNÇÕES DE BANCO ---
+# --- FUNÇÕES DE APOIO ---
 def run_query(query, params=(), commit=False):
     conn = sqlite3.connect('estoque_ti.db')
     c = conn.cursor()
@@ -38,6 +39,14 @@ def run_query(query, params=(), commit=False):
         res = c.fetchall()
         conn.close()
         return res
+
+def to_excel(df):
+    output = io.BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    df.to_excel(writer, index=False, sheet_name='Histórico')
+    writer.close()
+    processed_data = output.getvalue()
+    return processed_data
 
 # --- INTERFACE ---
 st.set_page_config(page_title="Controle de Periféricos TI", layout="wide")
@@ -112,12 +121,9 @@ elif choice == "📥 Reposição (Entrada)":
 
 elif choice == "⚙️ Gerenciar Itens":
     st.title("Gerenciamento do Catálogo")
-    
-    # NOVAS ABAS: "Renomear" e "Zerar Histórico" com senha
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🆕 Cadastrar", "✏️ Editar Limites", "📝 Renomear Item", "🗑️ Remover", "🧹 Zerar Histórico"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🆕 Cadastrar", "✏️ Editar Limites", "📝 Renomear", "🗑️ Remover", "🧹 Zerar Histórico"])
     
     with tab1:
-        st.subheader("Novo Periférico")
         n_item = st.text_input("Nome").strip()
         n_qtd = st.number_input("Qtd Inicial", min_value=0)
         n_lim = st.number_input("Limite de Alerta", min_value=1, value=5)
@@ -128,7 +134,6 @@ elif choice == "⚙️ Gerenciar Itens":
             except: st.error("Item já existe.")
 
     with tab2:
-        st.subheader("Alterar Limite ou Quantidade")
         df_itens = pd.DataFrame(run_query("SELECT * FROM produtos ORDER BY item ASC"), columns=['item', 'quantidade', 'limite_minimo'])
         item_edit = st.selectbox("Selecione para editar", df_itens['item'].tolist())
         atual = df_itens[df_itens['item'] == item_edit].iloc[0]
@@ -140,26 +145,16 @@ elif choice == "⚙️ Gerenciar Itens":
             st.rerun()
 
     with tab3:
-        st.subheader("Renomear Item Existente")
-        df_itens = pd.DataFrame(run_query("SELECT item FROM produtos ORDER BY item ASC"), columns=['item'])
-        item_para_renomear = st.selectbox("Selecione o item atual", df_itens['item'].tolist(), key="ren1")
-        novo_nome_input = st.text_input("Novo nome para este item").strip()
-        
-        if st.button("Confirmar Novo Nome"):
+        item_para_renomear = st.selectbox("Item atual", df_itens['item'].tolist(), key="ren1")
+        novo_nome_input = st.text_input("Novo nome").strip()
+        if st.button("Confirmar Renomeação"):
             if novo_nome_input:
-                try:
-                    # 1. Atualiza na tabela de produtos
-                    run_query("UPDATE produtos SET item = ? WHERE item = ?", (novo_nome_input, item_para_renomear), True)
-                    # 2. Atualiza em todo o histórico para não perder o rastro
-                    run_query("UPDATE historico SET item = ? WHERE item = ?", (novo_nome_input, item_para_renomear), True)
-                    st.success(f"Item '{item_para_renomear}' agora se chama '{novo_nome_input}'!")
-                    st.rerun()
-                except: st.error("Erro ao renomear. Verifique se o novo nome já existe.")
-            else: st.error("Digite um novo nome válido.")
+                run_query("UPDATE produtos SET item = ? WHERE item = ?", (novo_nome_input, item_para_renomear), True)
+                run_query("UPDATE historico SET item = ? WHERE item = ?", (novo_nome_input, item_para_renomear), True)
+                st.success("Item renomeado!")
+                st.rerun()
 
     with tab4:
-        st.subheader("Excluir do Sistema")
-        df_itens = pd.DataFrame(run_query("SELECT item FROM produtos ORDER BY item ASC"), columns=['item'])
         item_del = st.selectbox("Remover item", df_itens['item'].tolist(), key="del1")
         if st.checkbox(f"Confirmar exclusão de {item_del}"):
             if st.button("Remover Permanentemente"):
@@ -169,27 +164,37 @@ elif choice == "⚙️ Gerenciar Itens":
                 
     with tab5:
         st.subheader("Limpar Dados de Teste")
-        st.warning("⚠️ Esta ação exige senha de administrador.")
-        senha_input = st.text_input("Digite a senha de Admin", type="password")
-        
+        senha_input = st.text_input("Senha de Admin", type="password")
         if senha_input == SENHA_ADMIN:
-            st.success("Senha correta. O botão de exclusão está liberado.")
-            confirmar_reset = st.checkbox("Confirmo que desejo apagar TODO o histórico.")
-            if st.button("APAGAR TUDO AGORA"):
-                if confirmar_reset:
-                    run_query("DELETE FROM historico", commit=True)
-                    st.success("O histórico foi zerado!")
-                    st.rerun()
-                else: st.error("Marque a confirmação.")
-        elif senha_input != "" and senha_input != SENHA_ADMIN:
-            st.error("Senha incorreta. Acesso negado.")
+            st.warning("Isso apagará o histórico, mas manterá o saldo atual do estoque.")
+            if st.button("APAGAR HISTÓRICO E NOTIFICAR"):
+                # 1. Apaga tudo
+                run_query("DELETE FROM historico", commit=True)
+                # 2. Insere aviso de limpeza
+                data_agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                run_query("INSERT INTO historico (colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?)", 
+                          ("SISTEMA", "LIMPEZA GERAL", data_agora, "LOG", "ADMIN", 0), True)
+                st.success("Histórico zerado. Aviso de limpeza gerado.")
+                st.rerun()
 
 elif choice == "📜 Histórico":
     st.title("Histórico de Movimentações")
-    busca = st.text_input("🔍 Buscar (Usuário, Item ou Chamado)").strip().upper()
+    
+    col_busca, col_excel = st.columns([3, 1])
+    
+    with col_busca:
+        busca = st.text_input("🔍 Buscar (Usuário, Item ou Chamado)").strip().upper()
+    
     conn = sqlite3.connect('estoque_ti.db')
     df_hist = pd.read_sql_query("SELECT colaborador, item, quantidade, data, tipo, chamado FROM historico ORDER BY id DESC", conn)
     conn.close()
+    
     if busca:
         df_hist = df_hist[df_hist['colaborador'].str.contains(busca) | df_hist['item'].str.upper().str.contains(busca) | df_hist['chamado'].str.contains(busca)]
+    
+    with col_excel:
+        # Botão para baixar em Excel
+        excel_data = to_excel(df_hist)
+        st.download_button(label="📥 Baixar em Excel", data=excel_data, file_name=f'historico_estoque_{datetime.now().strftime("%Y%m%d")}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
     st.dataframe(df_hist, use_container_width=True)
