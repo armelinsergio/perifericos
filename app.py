@@ -4,7 +4,7 @@ from datetime import datetime
 import io
 from PIL import Image
 import time
-from sqlalchemy import text # IMPORTANTE: Nova biblioteca para tratar o texto SQL
+from sqlalchemy import text
 
 # --- CONFIGURAÇÕES INICIAIS ---
 UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
@@ -30,7 +30,6 @@ conn = st.connection("postgresql", type="sql", url=st.secrets["PG_URL"])
 
 def init_db():
     with conn.session as session:
-        # Agora usamos text("""SQL""") para funcionar na versão nova
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS produtos (
                 unidade TEXT, item TEXT, quantidade INTEGER, limite_minimo INTEGER,
@@ -47,11 +46,37 @@ def init_db():
 
 init_db()
 
-# --- FUNÇÕES DE APOIO ---
-def to_excel(df):
+# --- FUNÇÕES DE EXCEL FORMATADO ---
+def to_excel_historico(df):
     output = io.BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     df.to_excel(writer, index=False, sheet_name='Histórico')
+    writer.close()
+    return output.getvalue()
+
+def to_excel_compras(df, unidade):
+    output = io.BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    # Deixa espaço para o título no topo
+    df.to_excel(writer, index=False, sheet_name='Lista de Compras', startrow=3)
+    
+    workbook = writer.book
+    worksheet = writer.sheets['Lista de Compras']
+
+    # Formatações
+    fmt_titulo = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#FFFFFF', 'bg_color': '#000000', 'align': 'center'})
+    fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
+    fmt_zebra = workbook.add_format({'bg_color': '#F9F9F9', 'border': 1})
+    
+    # Escreve o Título
+    worksheet.merge_range('A1:C2', f'SOLICITAÇÃO DE COMPRAS - {unidade}', fmt_titulo)
+    worksheet.write('A3', f'Gerado em: {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+
+    # Ajusta largura das colunas e aplica bordas
+    for i, col in enumerate(df.columns):
+        worksheet.set_column(i, i, 25)
+        worksheet.write(3, i, col, fmt_header)
+
     writer.close()
     return output.getvalue()
 
@@ -75,27 +100,41 @@ choice = st.sidebar.selectbox("Menu Principal", menu)
 
 if choice == "📊 Dashboard":
     st.header(f"Painel de Controle - {unidade_atual}")
-    # conn.query já aceita texto puro, mas para consistência e segurança usamos params
-    df_u = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
+    df_u = conn.query("SELECT item as \"Produto\", quantidade as \"Estoque\", limite_minimo as \"Mínimo\" FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
                       params={"unid": unidade_atual}, ttl=0)
 
     if df_u.empty:
         st.info("Nenhum item cadastrado.")
     else:
-        df_zerado = df_u[df_u['quantidade'] <= 0]
+        df_zerado = df_u[df_u['Estoque'] <= 0]
+        df_limite = df_u[(df_u['Estoque'] > 0) & (df_u['Estoque'] <= df_u['Mínimo'])]
+        df_ok = df_u[df_u['Estoque'] > df_u['Mínimo']]
+
         if not df_zerado.empty:
             st.error("### 🔴 ESTOQUE ZERADO")
             st.dataframe(df_zerado, use_container_width=True)
         
-        df_limite = df_u[(df_u['quantidade'] > 0) & (df_u['quantidade'] <= df_u['limite_minimo'])]
         if not df_limite.empty:
             st.warning("### 🟡 LIMITE MÍNIMO ATINGIDO")
             st.dataframe(df_limite, use_container_width=True)
 
-        df_ok = df_u[df_u['quantidade'] > df_u['limite_minimo']]
         if not df_ok.empty:
             st.success("### 🟢 ESTOQUE SAUDÁVEL")
             st.dataframe(df_ok, use_container_width=True)
+        
+        # BOTÃO DE COMPRAS FORMATADO
+        df_compra = pd.concat([df_zerado, df_limite])
+        if not df_compra.empty:
+            st.divider()
+            st.markdown("#### 🛒 Reposição de Estoque")
+            st.info("Clique abaixo para gerar a lista formatada para o setor de compras.")
+            excel_compra = to_excel_compras(df_compra, unidade_atual)
+            st.download_button(
+                label="📥 Baixar Lista de Compras Formatada",
+                data=excel_compra,
+                file_name=f"compras_{unidade_atual}_{datetime.now().strftime('%d_%m')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 elif choice == "📤 Saída":
     st.header(f"Registrar Entrega - {unidade_atual}")
@@ -197,11 +236,24 @@ elif choice == "⚙️ Gestão":
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
-    df_h = conn.query("SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = :unid ORDER BY id DESC", 
-                      params={"unid": unidade_atual}, ttl=0)
+    
+    # --- CAMPO DE BUSCA ---
+    busca = st.text_input("🔍 Buscar por Colaborador, Item ou Chamado").upper()
+    
+    query_hist = "SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = :unid"
+    params_hist = {"unid": unidade_atual}
+    
+    if busca:
+        # ILIKE funciona no Postgres para busca parcial ignorando maiúsculas/minúsculas
+        query_hist += " AND (colaborador ILIKE :b OR item ILIKE :b OR chamado ILIKE :b)"
+        params_hist["b"] = f"%{busca}%"
+    
+    query_hist += " ORDER BY id DESC"
+    
+    df_h = conn.query(query_hist, params=params_hist, ttl=0)
     
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
-        st.download_button("📥 Excel", to_excel(df_h), f"hist_{unidade_atual}.xlsx")
+        st.download_button("📥 Baixar Histórico Completo", to_excel_historico(df_h), f"hist_{unidade_atual}.xlsx")
     else:
-        st.info("Nenhuma movimentação.")
+        st.info("Nenhuma movimentação encontrada.")
