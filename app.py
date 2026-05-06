@@ -7,7 +7,7 @@ from PIL import Image
 import time
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "BELO HORIZONTE", "JOINVILLE", "RIO DE JANEIRO"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
 SENHA_ADMIN = "admin123"
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
@@ -28,12 +28,12 @@ st.markdown("""
 # --- CONEXÃO OTIMIZADA (CACHE) ---
 @st.cache_resource
 def get_connection():
-    # Mantém a conexão aberta para evitar lentidão
     return psycopg2.connect(st.secrets["PG_URL"])
 
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
+    # Criação das tabelas base
     cur.execute("""
         CREATE TABLE IF NOT EXISTS produtos (
             unidade TEXT, item TEXT, quantidade INTEGER, limite_minimo INTEGER,
@@ -44,6 +44,12 @@ def init_db():
             data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER
         );
     """)
+    # Adiciona a coluna NF se ela não existir (Migração)
+    try:
+        cur.execute("ALTER TABLE historico ADD COLUMN IF NOT EXISTS nf TEXT;")
+    except:
+        pass
+        
     conn.commit()
     cur.close()
 
@@ -118,32 +124,40 @@ elif choice == "📤 Saída":
                     if saldo >= q_sai:
                         cur = conn.cursor()
                         cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE unidade = %s AND item = %s", (q_sai, unidade_atual, it_sel))
-                        cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                                    (unidade_atual, user, it_sel, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", cham, q_sai))
+                        cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                    (unidade_atual, user, it_sel, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", cham, q_sai, "N/A"))
                         conn.commit()
                         cur.close()
                         st.toast(f"✅ Saída registrada: {q_sai}x {it_sel}", icon="✅")
-                        time.sleep(1) # Pequena pausa para o usuário ver o processamento
+                        time.sleep(1)
                         st.rerun()
                     else: st.error("Estoque insuficiente.")
                 else: st.error("Preencha todos os campos.")
 
 elif choice == "📥 Entrada":
-    st.header(f"Entrada de Material - {unidade_atual}")
+    st.header(f"Entrada de Material (Reposição) - {unidade_atual}")
     conn = get_connection()
     df_itens = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
     
-    if not df_itens.empty:
-        it_ent = st.selectbox("Produto", df_itens['item'].tolist())
-        q_ent = st.number_input("Qtd Recebida", min_value=1, step=1)
-        if st.button("Adicionar ao Estoque"):
+    c1, c2 = st.columns(2)
+    with c1:
+        if not df_itens.empty:
+            it_ent = st.selectbox("Produto", df_itens['item'].tolist())
+            q_ent = st.number_input("Qtd Recebida", min_value=1, step=1)
+    with c2:
+        nf_ent = st.text_input("Número da NF").upper()
+        
+    if st.button("Confirmar Entrada"):
+        if not nf_ent:
+            st.error("Obrigatório informar o número da NF para reposição.")
+        else:
             cur = conn.cursor()
             cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE unidade = %s AND item = %s", (q_ent, unidade_atual, it_ent))
-            cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (unidade_atual, "SISTEMA", it_ent, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "REPOSIÇÃO", q_ent))
+            cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (unidade_atual, "SISTEMA", it_ent, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "REPOSIÇÃO", q_ent, nf_ent))
             conn.commit()
             cur.close()
-            st.toast(f"📥 Estoque de {it_ent} atualizado!", icon="📥")
+            st.toast(f"📥 Estoque atualizado via NF {nf_ent}!", icon="📥")
             time.sleep(1)
             st.rerun()
 
@@ -154,21 +168,26 @@ elif choice == "⚙️ Gestão":
     
     with t1:
         n_it = st.text_input("Nome do Periférico").upper()
-        n_q = st.number_input("Qtd Inicial", min_value=0)
-        n_m = st.number_input("Limite Mínimo", min_value=1, value=5)
+        col_q, col_nf = st.columns(2)
+        with col_q:
+            n_q = st.number_input("Qtd Inicial", min_value=0)
+            n_m = st.number_input("Limite Mínimo", min_value=1, value=5)
+        with col_nf:
+            n_nf = st.text_input("Número da NF (Opcional)").upper()
+
         if st.button("Salvar Cadastro"):
             if n_it:
                 try:
                     cur = conn.cursor()
                     cur.execute("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (%s, %s, %s, %s)", (unidade_atual, n_it, n_q, n_m))
-                    cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                                (unidade_atual, "SISTEMA", n_it, datetime.now().strftime("%d/%m/%Y %H:%M"), "CADASTRO", "N/A", n_q))
+                    cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                (unidade_atual, "SISTEMA", n_it, datetime.now().strftime("%d/%m/%Y %H:%M"), "CADASTRO", "N/A", n_q, n_nf if n_nf else "N/A"))
                     conn.commit()
                     cur.close()
-                    st.toast(f"✨ {n_it} cadastrado com sucesso!", icon="✨")
+                    st.toast(f"✨ {n_it} cadastrado!", icon="✨")
                     time.sleep(1)
                     st.rerun()
-                except Exception as e:
+                except:
                     st.error("Este item já existe.")
                     conn.rollback()
 
@@ -247,10 +266,12 @@ elif choice == "⚙️ Gestão":
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
     conn = get_connection()
-    df_h = pd.read_sql(f"SELECT colaborador, item, quantidade, data, tipo, chamado FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
+    # Adicionada a coluna NF na consulta
+    df_h = pd.read_sql(f"SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
     
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
-        st.download_button("📥 Baixar Excel", to_excel(df_h), f"hist_{unidade_atual}.xlsx")
+        excel_data = to_excel(df_h)
+        st.download_button("📥 Baixar Excel", excel_data, f"hist_{unidade_atual}.xlsx")
     else:
         st.info("Nenhuma movimentação.")
