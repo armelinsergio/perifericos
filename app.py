@@ -62,7 +62,7 @@ def to_excel(df):
     return output.getvalue()
 
 # --- INTERFACE E CONFIGURAÇÕES VISUAIS ---
-st.set_page_config(page_title="Controle de Periféricos TI", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Controlo de Periféricos TI", layout="wide", initial_sidebar_state="expanded")
 
 # --- ESCONDER ELEMENTOS NATIVOS ---
 esconder_elementos = """
@@ -77,15 +77,14 @@ esconder_elementos = """
 """
 st.markdown(esconder_elementos, unsafe_allow_html=True)
 
-# --- LOGO CENTRALIZADO NO TOPO DA PÁGINA ---
-nome_do_logo = "logo_totvs_2025_white.png"
-if os.path.exists(nome_do_logo):
-    # Cria colunas para centralizar a imagem (ajuste os números se quiser o logo maior ou menor)
-    c1, c2, c3 = st.columns([1, 1, 1])
+# --- LOGÓTIPO CENTRALIZADO NO TOPO DA PÁGINA ---
+try:
+    # As colunas ajudam a manter a imagem centrada e no tamanho ideal
+    c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.image(nome_do_logo, use_container_width=True)
-else:
-    st.sidebar.warning("⚠️ Logo não encontrado no GitHub.")
+        st.image("logo_totvs_2025_white.png", use_container_width=True)
+except Exception as e:
+    st.sidebar.error(f"⚠️ Erro ao carregar o logótipo. Confirme o ficheiro.")
 
 # --- BARRA LATERAL ---
 st.sidebar.title("🏢 Unidade")
@@ -93,7 +92,7 @@ unidade_atual = st.sidebar.selectbox("Selecione a Unidade", UNIDADES)
 st.sidebar.divider()
 
 st.sidebar.title("🎮 Menu")
-menu = ["📊 Dashboard", "📤 Dar Baixa (Saída)", "📥 Reposição (Entrada)", "⚙️ Gerenciar Itens", "📜 Histórico"]
+menu = ["📊 Dashboard", "📤 Dar Baixa (Saída)", "📥 Reposição (Entrada)", "⚙️ Gerir Itens", "📜 Histórico"]
 choice = st.sidebar.selectbox("Opções", menu)
 
 # --- LÓGICA DAS TELAS ---
@@ -106,24 +105,24 @@ if choice == "📊 Dashboard":
     conn.close()
 
     if df.empty:
-        st.info(f"Nenhum item cadastrado para {unidade_atual}.")
+        st.info(f"Nenhum item registado para {unidade_atual}.")
     else:
-        # Exibe a tabela completa diretamente para melhor visibilidade
+        # Mostra a tabela de inventário completa para melhor visibilidade
         st.dataframe(df, use_container_width=True, height=600)
         
-        # Botão discreto para exportar o que precisa de compra
+        # Botão discreto para exportar o que precisa de compras (apenas itens abaixo do mínimo)
         df_compra = df[df['Estoque Atual'] <= df['Mínimo Aceitável']]
         if not df_compra.empty:
             st.divider()
-            st.warning(f"Existem {len(df_compra)} itens com estoque baixo ou zerado.")
+            st.warning(f"⚠️ Existem {len(df_compra)} itens com stock baixo ou a zeros que precisam de reposição.")
             csv = df_compra.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Baixar Lista de Itens para Reposição", csv, f"reposicao_{unidade_atual}.csv")
 
 elif choice == "📤 Dar Baixa (Saída)":
-    st.header(f"Registrar Entrega ({unidade_atual})")
+    st.header(f"Registar Entrega ({unidade_atual})")
     col1, col2 = st.columns(2)
     with col1:
-        colaborador = st.text_input("Usuário do Colaborador").strip().upper()
+        colaborador = st.text_input("Utilizador do Colaborador").strip().upper()
         n_chamado = st.text_input("Número do Chamado").strip().upper()
     with col2:
         df_itens = pd.DataFrame(run_query("SELECT item FROM produtos WHERE unidade = ? ORDER BY item ASC", (unidade_atual,)), columns=['item'])
@@ -132,7 +131,7 @@ elif choice == "📤 Dar Baixa (Saída)":
 
     if st.button("Confirmar Saída") and item_selecionado:
         if not colaborador or not n_chamado: 
-            st.error("Preencha Usuário e Chamado.")
+            st.error("Preencha Utilizador e Chamado.")
         else:
             saldo = run_query("SELECT quantidade FROM produtos WHERE unidade = ? AND item = ?", (unidade_atual, item_selecionado))[0][0]
             if saldo >= qtd:
@@ -140,9 +139,9 @@ elif choice == "📤 Dar Baixa (Saída)":
                 run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
                           (unidade_atual, colaborador, item_selecionado, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", n_chamado, qtd), True)
                 st.toast(f"✅ Saída Confirmada!")
-                st.success(f"Registrado: {qtd}x {item_selecionado} para {colaborador}")
+                st.success(f"Registado: {qtd}x {item_selecionado} para {colaborador}")
                 st.balloons()
-            else: st.error("Estoque insuficiente.")
+            else: st.error("Stock insuficiente.")
 
 elif choice == "📥 Reposição (Entrada)":
     st.header(f"Entrada de Material ({unidade_atual})")
@@ -150,14 +149,14 @@ elif choice == "📥 Reposição (Entrada)":
     if not df_itens.empty:
         item_add = st.selectbox("Selecione o Item", df_itens['item'].tolist())
         qtd_add = st.number_input("Quantidade Adquirida", min_value=1, step=1)
-        if st.button("Adicionar ao Estoque"):
+        if st.button("Adicionar ao Stock"):
             run_query("UPDATE produtos SET quantidade = quantidade + ? WHERE unidade = ? AND item = ?", (qtd_add, unidade_atual, item_add), True)
             run_query("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
                       (unidade_atual, "REPOSIÇÃO", item_add, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "N/A", qtd_add), True)
-            st.toast("📥 Estoque Atualizado!")
-            st.success(f"Adicionado {qtd_add} unidades ao item {item_add}.")
+            st.toast("📥 Stock Atualizado!")
+            st.success(f"Adicionadas {qtd_add} unidades ao item {item_add}.")
 
-elif choice == "⚙️ Gerenciar Itens":
+elif choice == "⚙️ Gerir Itens":
     st.header(f"Gestão de Catálogo - {unidade_atual}")
     t1, t2, t3, t4, t5, t6 = st.tabs(["🆕 Novo", "✏️ Limites", "📝 Renomear", "🗑️ Remover", "🧹 Histórico", "🚀 Reset"])
     
@@ -167,9 +166,9 @@ elif choice == "⚙️ Gerenciar Itens":
         n_item = st.text_input("Nome do Periférico")
         n_qtd = st.number_input("Qtd Inicial", min_value=0)
         n_lim = st.number_input("Limite de Alerta", min_value=1, value=5)
-        if st.button("Salvar Novo"):
+        if st.button("Guardar Novo"):
             run_query("INSERT OR IGNORE INTO produtos VALUES (?, ?, ?, ?)", (unidade_atual, n_item, n_qtd, n_lim), True)
-            st.success("Item cadastrado com sucesso!")
+            st.success("Item registado com sucesso!")
             st.rerun()
 
     with t2:
@@ -178,7 +177,7 @@ elif choice == "⚙️ Gerenciar Itens":
             atual = df_itens[df_itens['item'] == item_edit].iloc[0]
             nova_q = st.number_input("Ajustar Quantidade", value=int(atual['quantidade']))
             novo_l = st.number_input("Ajustar Mínimo", value=int(atual['limite_minimo']))
-            if st.button("Salvar Alterações"):
+            if st.button("Guardar Alterações"):
                 run_query("UPDATE produtos SET quantidade = ?, limite_minimo = ? WHERE unidade = ? AND item = ?", (nova_q, novo_l, unidade_atual, item_edit), True)
                 st.success("Configurações atualizadas!")
 
@@ -195,7 +194,7 @@ elif choice == "⚙️ Gerenciar Itens":
         if not df_itens.empty:
             item_d = st.selectbox("Remover:", df_itens['item'].tolist(), key="d1")
             if st.checkbox(f"Confirmar exclusão definitiva de {item_d}"):
-                if st.button("Deletar"):
+                if st.button("Apagar"):
                     run_query("DELETE FROM produtos WHERE unidade = ? AND item = ?", (unidade_atual, item_d), True)
                     st.rerun()
 
@@ -210,20 +209,20 @@ elif choice == "⚙️ Gerenciar Itens":
         senha_r = st.text_input("Senha Admin (Reset Total)", type="password")
         if senha_r == SENHA_ADMIN:
             if st.text_input("Digite CONFIRMAR:").upper() == "CONFIRMAR":
-                if st.button("RESETAR CATALOGO"):
+                if st.button("RESETAR CATÁLOGO"):
                     run_query("DELETE FROM produtos WHERE unidade = ?", (unidade_atual,), True)
                     st.rerun()
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico de Movimentações - {unidade_atual}")
-    busca = st.text_input("🔍 Pesquisar por Usuário, Item ou Chamado").upper()
+    busca = st.text_input("🔍 Pesquisar por Utilizador, Item ou Chamado").upper()
     
     conn = sqlite3.connect('estoque_ti.db')
-    df_hist = pd.read_sql_query(f"SELECT colaborador as 'Usuário', item as 'Item', quantidade as 'Qtd', data as 'Data/Hora', tipo as 'Operação', chamado as 'Chamado' FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
+    df_hist = pd.read_sql_query(f"SELECT colaborador as 'Utilizador', item as 'Item', quantidade as 'Qtd', data as 'Data/Hora', tipo as 'Operação', chamado as 'Chamado' FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
     conn.close()
     
     if busca:
-        df_hist = df_hist[df_hist['Usuário'].str.contains(busca, na=False) | df_hist['Item'].str.upper().str.contains(busca, na=False) | df_hist['Chamado'].str.contains(busca, na=False)]
+        df_hist = df_hist[df_hist['Utilizador'].str.contains(busca, na=False) | df_hist['Item'].str.upper().str.contains(busca, na=False) | df_hist['Chamado'].str.contains(busca, na=False)]
     
     if not df_hist.empty:
         ex = to_excel(df_hist)
