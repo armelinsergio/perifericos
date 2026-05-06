@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
 from datetime import datetime
 import io
 from PIL import Image
@@ -25,29 +24,26 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DE CONEXÃO (SEM CACHE PARA EVITAR INTERFACE ERROR) ---
-def get_connection():
-    return psycopg2.connect(st.secrets["PG_URL"])
+# --- CONEXÃO NATIVA (POOL DE CONEXÕES) ---
+# O st.connection gerencia automaticamente a abertura/fechamento e o "heartbeat"
+conn = st.connection("postgresql", type="sql", url=st.secrets["PG_URL"])
 
 def init_db():
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
+    # Usamos o .session para garantir que o comando seja executado e fechado
+    with conn.session as session:
+        session.execute("""
             CREATE TABLE IF NOT EXISTS produtos (
                 unidade TEXT, item TEXT, quantidade INTEGER, limite_minimo INTEGER,
                 PRIMARY KEY (unidade, item)
             );
+        """)
+        session.execute("""
             CREATE TABLE IF NOT EXISTS historico (
                 id SERIAL PRIMARY KEY, unidade TEXT, colaborador TEXT, item TEXT,
                 data TEXT, tipo TEXT, chamado TEXT, quantidade INTEGER, nf TEXT
             );
         """)
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        st.error(f"Erro ao inicializar banco: {e}")
+        session.commit()
 
 init_db()
 
@@ -79,152 +75,135 @@ choice = st.sidebar.selectbox("Menu Principal", menu)
 
 if choice == "📊 Dashboard":
     st.header(f"Painel de Controle - {unidade_atual}")
-    try:
-        conn = get_connection()
-        df_u = pd.read_sql(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-        conn.close()
+    # O query() do st.connection já usa cache automático por 10 minutos (TTL)
+    # se você quiser que ele seja instantâneo, use ttl=0
+    df_u = conn.query(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
+                      params={"unid": unidade_atual}, ttl=0)
 
-        if df_u.empty:
-            st.info("Nenhum item cadastrado.")
-        else:
-            df_zerado = df_u[df_u['quantidade'] <= 0]
-            if not df_zerado.empty:
-                st.error("### 🔴 ESTOQUE ZERADO")
-                st.dataframe(df_zerado, use_container_width=True)
-            
-            df_limite = df_u[(df_u['quantidade'] > 0) & (df_u['quantidade'] <= df_u['limite_minimo'])]
-            if not df_limite.empty:
-                st.warning("### 🟡 LIMITE MÍNIMO ATINGIDO")
-                st.dataframe(df_limite, use_container_width=True)
+    if df_u.empty:
+        st.info("Nenhum item cadastrado.")
+    else:
+        df_zerado = df_u[df_u['quantidade'] <= 0]
+        if not df_zerado.empty:
+            st.error("### 🔴 ESTOQUE ZERADO")
+            st.dataframe(df_zerado, use_container_width=True)
+        
+        df_limite = df_u[(df_u['quantidade'] > 0) & (df_u['quantidade'] <= df_u['limite_minimo'])]
+        if not df_limite.empty:
+            st.warning("### 🟡 LIMITE MÍNIMO ATINGIDO")
+            st.dataframe(df_limite, use_container_width=True)
 
-            df_ok = df_u[df_u['quantidade'] > df_u['limite_minimo']]
-            if not df_ok.empty:
-                st.success("### 🟢 ESTOQUE SAUDÁVEL")
-                st.dataframe(df_ok, use_container_width=True)
-    except Exception as e:
-        st.error(f"Erro ao carregar Dashboard: {e}")
+        df_ok = df_u[df_u['quantidade'] > df_u['limite_minimo']]
+        if not df_ok.empty:
+            st.success("### 🟢 ESTOQUE SAUDÁVEL")
+            st.dataframe(df_ok, use_container_width=True)
 
 elif choice == "📤 Saída":
     st.header(f"Registrar Entrega - {unidade_atual}")
-    try:
-        conn = get_connection()
-        df_itens = pd.read_sql(f"SELECT item, quantidade FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-        
-        c1, col2 = st.columns(2)
-        with c1:
-            user = st.text_input("Colaborador").upper()
-            cham = st.text_input("Número do Chamado").upper()
-        with col2:
-            if not df_itens.empty:
-                it_sel = st.selectbox("Selecione o Produto", df_itens['item'].tolist())
-                q_sai = st.number_input("Quantidade", min_value=1, step=1)
-                
-                if st.button("Confirmar Baixa"):
-                    if user and cham:
-                        saldo = df_itens.loc[df_itens['item'] == it_sel, 'quantidade'].values[0]
-                        if saldo >= q_sai:
-                            cur = conn.cursor()
-                            cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE unidade = %s AND item = %s", (q_sai, unidade_atual, it_sel))
-                            cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                                        (unidade_atual, user, it_sel, datetime.now().strftime("%d/%m/%Y %H:%M"), "SAÍDA", cham, q_sai, "N/A"))
-                            conn.commit()
-                            cur.close()
-                            st.toast(f"✅ Saída registrada!", icon="✅")
-                            time.sleep(1)
-                            st.rerun()
-                        else: st.error("Estoque insuficiente.")
-                    else: st.error("Preencha todos os campos.")
-            else: st.warning("Nenhum item cadastrado.")
-        conn.close()
-    except Exception as e:
-        st.error(f"Erro na conexão: {e}")
+    df_itens = conn.query(f"SELECT item, quantidade FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
+                          params={"unid": unidade_atual}, ttl=0)
+    
+    c1, col2 = st.columns(2)
+    with c1:
+        user = st.text_input("Colaborador").upper()
+        cham = st.text_input("Número do Chamado").upper()
+    with col2:
+        if not df_itens.empty:
+            it_sel = st.selectbox("Selecione o Produto", df_itens['item'].tolist())
+            q_sai = st.number_input("Quantidade", min_value=1, step=1)
+            
+            if st.button("Confirmar Baixa"):
+                if user and cham:
+                    saldo = df_itens.loc[df_itens['item'] == it_sel, 'quantidade'].values[0]
+                    if saldo >= q_sai:
+                        with conn.session as s:
+                            s.execute("UPDATE produtos SET quantidade = quantidade - :q WHERE unidade = :unid AND item = :it", 
+                                      {"q": q_sai, "unid": unidade_atual, "it": it_sel})
+                            s.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, :user, :it, :dt, 'SAÍDA', :ch, :q, 'N/A')",
+                                      {"unid": unidade_atual, "user": user, "it": it_sel, "dt": datetime.now().strftime("%d/%m/%Y %H:%M"), "ch": cham, "q": q_sai})
+                            s.commit()
+                        st.toast(f"✅ Saída registrada!", icon="✅")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else: st.error("Estoque insuficiente.")
+                else: st.error("Preencha todos os campos.")
+        else: st.warning("Nenhum item cadastrado.")
 
 elif choice == "📥 Entrada":
     st.header(f"Entrada de Material (Reposição) - {unidade_atual}")
-    try:
-        conn = get_connection()
-        df_itens = pd.read_sql(f"SELECT item FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            if not df_itens.empty:
-                it_ent = st.selectbox("Produto", df_itens['item'].tolist())
-                q_ent = st.number_input("Qtd Recebida", min_value=1, step=1)
-        with c2:
-            nf_ent = st.text_input("Número da NF").upper()
+    df_itens = conn.query(f"SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
+                          params={"unid": unidade_atual}, ttl=0)
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if not df_itens.empty:
+            it_ent = st.selectbox("Produto", df_itens['item'].tolist())
+            q_ent = st.number_input("Qtd Recebida", min_value=1, step=1)
+    with c2:
+        nf_ent = st.text_input("Número da NF").upper()
             
-        if st.button("Confirmar Entrada"):
-            if not nf_ent:
-                st.error("Obrigatório informar o número da NF.")
-            else:
-                cur = conn.cursor()
-                cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE unidade = %s AND item = %s", (q_ent, unidade_atual, it_ent))
-                cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                            (unidade_atual, "SISTEMA", it_ent, datetime.now().strftime("%d/%m/%Y %H:%M"), "ENTRADA", "REPOSIÇÃO", q_ent, nf_ent))
-                conn.commit()
-                cur.close()
-                st.toast(f"📥 Estoque atualizado!", icon="📥")
-                time.sleep(1)
-                st.rerun()
-        conn.close()
-    except Exception as e:
-        st.error(f"Erro na conexão: {e}")
+    if st.button("Confirmar Entrada"):
+        if not nf_ent:
+            st.error("Obrigatório informar o número da NF.")
+        else:
+            with conn.session as s:
+                s.execute("UPDATE produtos SET quantidade = quantidade + :q WHERE unidade = :unid AND item = :it", 
+                          {"q": q_ent, "unid": unidade_atual, "it": it_ent})
+                s.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'ENTRADA', 'REPOSIÇÃO', :q, :nf)",
+                          {"unid": unidade_atual, "it": it_ent, "dt": datetime.now().strftime("%d/%m/%Y %H:%M"), "q": q_ent, "nf": nf_ent})
+                s.commit()
+            st.toast(f"📥 Estoque atualizado!", icon="📥")
+            time.sleep(0.5)
+            st.rerun()
 
 elif choice == "⚙️ Gestão":
     st.header(f"Gerenciamento - {unidade_atual}")
     t1, t2, t3, t4, t5, t6 = st.tabs(["🆕 Novo", "✏️ Ajustar", "📝 Renomear", "🗑️ Remover", "🧹 Histórico", "🚀 Reset"])
     
-    try:
-        conn = get_connection()
-        with t1:
-            n_it = st.text_input("Nome do Periférico").upper()
-            n_q = st.number_input("Qtd Inicial", min_value=0)
-            n_m = st.number_input("Limite Mínimo", min_value=1, value=5)
-            n_nf = st.text_input("NF (Opcional)").upper()
-            if st.button("Salvar Cadastro"):
-                if n_it:
-                    cur = conn.cursor()
-                    cur.execute("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (%s, %s, %s, %s)", (unidade_atual, n_it, n_q, n_m))
-                    cur.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                                (unidade_atual, "SISTEMA", n_it, datetime.now().strftime("%d/%m/%Y %H:%M"), "CADASTRO", "N/A", n_q, n_nf if n_nf else "N/A"))
-                    conn.commit()
-                    cur.close()
+    with t1:
+        n_it = st.text_input("Nome do Periférico").upper()
+        n_q = st.number_input("Qtd Inicial", min_value=0)
+        n_m = st.number_input("Limite Mínimo", min_value=1, value=5)
+        n_nf = st.text_input("NF (Opcional)").upper()
+        if st.button("Salvar Cadastro"):
+            if n_it:
+                try:
+                    with conn.session as s:
+                        s.execute("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:unid, :it, :q, :m)", 
+                                  {"unid": unidade_atual, "it": n_it, "q": n_q, "m": n_m})
+                        s.execute("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'CADASTRO', 'N/A', :q, :nf)",
+                                  {"unid": unidade_atual, "it": n_it, "dt": datetime.now().strftime("%d/%m/%Y %H:%M"), "q": n_q, "nf": n_nf if n_nf else "N/A"})
+                        s.commit()
                     st.toast("✨ Item cadastrado!", icon="✨")
-                    time.sleep(1)
+                    time.sleep(0.5)
                     st.rerun()
+                except:
+                    st.error("Erro: Item já existe ou problema no banco.")
 
-        with t2:
-            df_itens = pd.read_sql(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = '{unidade_atual}' ORDER BY item ASC", conn)
-            if not df_itens.empty:
-                it_edit = st.selectbox("Editar:", df_itens['item'].tolist())
-                linha = df_itens[df_itens['item'] == it_edit].iloc[0]
-                nq = st.number_input("Nova Qtd", value=int(linha['quantidade']))
-                nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']))
-                if st.button("Salvar"):
-                    cur = conn.cursor()
-                    cur.execute("UPDATE produtos SET quantidade = %s, limite_minimo = %s WHERE unidade = %s AND item = %s", (nq, nm, unidade_atual, it_edit))
-                    conn.commit()
-                    cur.close()
-                    st.toast("💾 Salvo!")
-                    time.sleep(1)
-                    st.rerun()
-        
-        # ... (As outras abas seguem a mesma lógica de abrir cursor e fechar no final)
-        conn.close()
-    except Exception as e:
-        st.error(f"Erro na Gestão: {e}")
+    with t2:
+        df_itens = conn.query(f"SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
+                              params={"unid": unidade_atual}, ttl=0)
+        if not df_itens.empty:
+            it_edit = st.selectbox("Editar:", df_itens['item'].tolist())
+            linha = df_itens[df_itens['item'] == it_edit].iloc[0]
+            nq = st.number_input("Nova Qtd", value=int(linha['quantidade']))
+            nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']))
+            if st.button("Salvar Ajustes"):
+                with conn.session as s:
+                    s.execute("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it", 
+                              {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
+                    s.commit()
+                st.toast("💾 Salvo!")
+                time.sleep(0.5)
+                st.rerun()
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
-    try:
-        conn = get_connection()
-        df_h = pd.read_sql(f"SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = '{unidade_atual}' ORDER BY id DESC", conn)
-        conn.close()
-        
-        if not df_h.empty:
-            st.dataframe(df_h, use_container_width=True)
-            st.download_button("📥 Excel", to_excel(df_h), f"hist_{unidade_atual}.xlsx")
-        else:
-            st.info("Nenhuma movimentação.")
-    except Exception as e:
-        st.error(f"Erro no Histórico: {e}")
+    df_h = conn.query(f"SELECT colaborador, item, quantidade, nf, data, tipo, chamado FROM historico WHERE unidade = :unid ORDER BY id DESC", 
+                      params={"unid": unidade_atual}, ttl=0)
+    
+    if not df_h.empty:
+        st.dataframe(df_h, use_container_width=True)
+        st.download_button("📥 Excel", to_excel(df_h), f"hist_{unidade_atual}.xlsx")
+    else:
+        st.info("Nenhuma movimentação.")
