@@ -8,7 +8,7 @@ from sqlalchemy import text
 import pytz
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
+UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
 SENHA_ADMIN = "admin123"
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
@@ -52,35 +52,21 @@ init_db()
 def get_data_br():
     return datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
 
-# FUNÇÃO MESTRE DE FORMATAÇÃO EXCEL
 def gerar_excel_formatado(df, nome_aba, titulo):
     output = io.BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    
-    # Inicia a planilha na linha 4 para dar espaço ao título
     df.to_excel(writer, index=False, sheet_name=nome_aba, startrow=3)
-    
     workbook = writer.book
     worksheet = writer.sheets[nome_aba]
-
-    # DEFINIÇÃO DE ESTILOS
     fmt_titulo = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#FFFFFF', 'bg_color': '#000000', 'align': 'center', 'valign': 'vcenter', 'border': 1})
     fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
-    fmt_comum = workbook.add_format({'border': 1, 'align': 'left'})
     fmt_data = workbook.add_format({'italic': True, 'font_size': 10})
-
-    # ESCREVER TÍTULO E DATA DE GERAÇÃO
     worksheet.merge_range('A1:G2', titulo, fmt_titulo)
     worksheet.write('A3', f'Relatório extraído em: {get_data_br()}', fmt_data)
-
-    # AJUSTAR CABEÇALHOS E COLUNAS
     for i, col in enumerate(df.columns):
-        # Ajusta largura da coluna (mínimo 15, máximo 35)
         largura = max(len(col) + 5, 18)
         worksheet.set_column(i, i, largura)
-        # Reaplica o formato de cabeçalho na linha 4
         worksheet.write(3, i, col, fmt_header)
-
     writer.close()
     return output.getvalue()
 
@@ -124,7 +110,6 @@ if choice == "📊 Dashboard":
             st.success("### 🟢 ESTOQUE SAUDÁVEL")
             st.dataframe(df_ok, use_container_width=True)
         
-        # EXCEL DE COMPRAS FORMATADO
         df_compra = pd.concat([df_zerado, df_limite])
         if not df_compra.empty:
             st.divider()
@@ -182,6 +167,7 @@ elif choice == "📥 Entrada":
 elif choice == "⚙️ Gestão":
     st.header(f"Gerenciamento - {unidade_atual}")
     t1, t2, t3, t4, t5, t6 = st.tabs(["🆕 Novo", "✏️ Ajustar", "📝 Renomear", "🗑️ Remover", "🧹 Histórico", "🚀 Reset"])
+    
     with t1:
         n_it = st.text_input("Nome do Periférico").upper()
         n_q = st.number_input("Qtd Inicial", min_value=0)
@@ -201,17 +187,71 @@ elif choice == "⚙️ Gestão":
     with t2:
         df_itens = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
         if not df_itens.empty:
-            it_edit = st.selectbox("Editar:", df_itens['item'].tolist())
+            it_edit = st.selectbox("Editar:", df_itens['item'].tolist(), key="sb_edit")
             linha = df_itens[df_itens['item'] == it_edit].iloc[0]
-            nq = st.number_input("Nova Qtd", value=int(linha['quantidade']))
-            nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']))
-            if st.button("Salvar Ajustes"):
+            nq = st.number_input("Nova Qtd", value=int(linha['quantidade']), key="ni_qtd")
+            nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']), key="ni_min")
+            if st.button("Salvar Ajustes", key="btn_ajustar"):
                 with conn.session as s:
                     s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it"), {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
                     s.commit()
                 st.toast("💾 Salvo!")
                 time.sleep(0.5)
                 st.rerun()
+
+    with t3:
+        df_ren = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
+        if not df_ren.empty:
+            it_ren = st.selectbox("Item para renomear:", df_ren['item'].tolist(), key="sb_ren")
+            novo_nome = st.text_input("Novo Nome").upper()
+            if st.button("Confirmar Renomeação"):
+                if novo_nome:
+                    with conn.session as s:
+                        s.execute(text("UPDATE produtos SET item = :novo WHERE unidade = :unid AND item = :velho"), {"novo": novo_nome, "unid": unidade_atual, "velho": it_ren})
+                        s.execute(text("UPDATE historico SET item = :novo WHERE unidade = :unid AND item = :velho"), {"novo": novo_nome, "unid": unidade_atual, "velho": it_ren})
+                        s.commit()
+                    st.toast("📝 Nome atualizado!")
+                    time.sleep(0.5)
+                    st.rerun()
+
+    with t4:
+        df_rem = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
+        if not df_rem.empty:
+            it_rem = st.selectbox("Escolha o item para remover", df_rem['item'].tolist(), key="sb_rem")
+            if st.checkbox(f"Confirmo a remoção de {it_rem}"):
+                if st.button("Remover Agora"):
+                    with conn.session as s:
+                        s.execute(text("DELETE FROM produtos WHERE unidade = :unid AND item = :it"), {"unid": unidade_atual, "it": it_rem})
+                        s.commit()
+                    st.toast("🗑️ Item removido!")
+                    time.sleep(0.5)
+                    st.rerun()
+
+    with t5:
+        st.subheader("Limpar Histórico")
+        senha_h = st.text_input("Senha Admin (Histórico)", type="password", key="pw_hist")
+        if senha_h == SENHA_ADMIN:
+            if st.button("Apagar Histórico desta Unidade"):
+                with conn.session as s:
+                    s.execute(text("DELETE FROM historico WHERE unidade = :unid"), {"unid": unidade_atual})
+                    s.commit()
+                st.toast("🧹 Histórico zerado!")
+                time.sleep(0.5)
+                st.rerun()
+
+    with t6:
+        st.error("⚠️ RESET TOTAL DO CATÁLOGO")
+        senha_r = st.text_input("Senha Admin (Reset)", type="password", key="pw_reset")
+        if senha_r == SENHA_ADMIN:
+            conf_text = st.text_input("Digite CONFIRMAR para apagar tudo:").upper()
+            if conf_text == "CONFIRMAR":
+                if st.button("EXECUTAR RESET"):
+                    with conn.session as s:
+                        s.execute(text("DELETE FROM produtos WHERE unidade = :unid"), {"unid": unidade_atual})
+                        s.commit()
+                    st.toast("🚀 Catálogo resetado!")
+                    time.sleep(0.5)
+                    st.rerun()
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
@@ -225,7 +265,6 @@ elif choice == "📜 Histórico":
     df_h = conn.query(query_hist, params=params_hist, ttl=0)
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
-        # EXCEL DE HISTÓRICO FORMATADO
         excel_hist = gerar_excel_formatado(df_h, "Histórico", f"RELATÓRIO DE MOVIMENTAÇÃO - {unidade_atual}")
         st.download_button("📥 Baixar Histórico Formatado (Excel)", excel_hist, f"historico_{unidade_atual}.xlsx")
     else:
