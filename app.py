@@ -8,7 +8,7 @@ from sqlalchemy import text
 import pytz
 
 # --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
 SENHA_ADMIN = "admin123"
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
@@ -94,7 +94,7 @@ if choice == "📊 Dashboard":
                       params={"unid": unidade_atual}, ttl=0)
 
     if df_u.empty:
-        st.info("Nenhum item cadastrado.")
+        st.info(f"Nenhum item cadastrado em {unidade_atual}. Vá em 'Gestão' para começar.")
     else:
         df_zerado = df_u[df_u['Estoque'] <= 0]
         df_limite = df_u[(df_u['Estoque'] > 0) & (df_u['Estoque'] <= df_u['Mínimo'])]
@@ -121,12 +121,15 @@ if choice == "📊 Dashboard":
 elif choice == "📤 Saída":
     st.header(f"Registrar Entrega - {unidade_atual}")
     df_itens = conn.query("SELECT item, quantidade FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
-    c1, col2 = st.columns(2)
-    with c1:
-        user = st.text_input("Colaborador").upper()
-        cham = st.text_input("Número do Chamado").upper()
-    with col2:
-        if not df_itens.empty:
+    
+    if df_itens.empty:
+        st.warning(f"⚠️ Não existem produtos cadastrados em {unidade_atual}. Cadastre primeiro em 'Gestão'.")
+    else:
+        c1, col2 = st.columns(2)
+        with c1:
+            user = st.text_input("Colaborador").upper()
+            cham = st.text_input("Número do Chamado").upper()
+        with col2:
             it_sel = st.selectbox("Selecione o Produto", df_itens['item'].tolist())
             q_sai = st.number_input("Quantidade", min_value=1, step=1)
             if st.button("Confirmar Baixa"):
@@ -146,52 +149,61 @@ elif choice == "📤 Saída":
 elif choice == "📥 Entrada":
     st.header(f"Entrada de Material (Reposição) - {unidade_atual}")
     df_itens = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
-    c1, c2 = st.columns(2)
-    with c1:
-        if not df_itens.empty:
+    
+    if df_itens.empty:
+        st.warning(f"⚠️ Não existem produtos cadastrados em {unidade_atual}.")
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
             it_ent = st.selectbox("Produto", df_itens['item'].tolist())
             q_ent = st.number_input("Qtd Recebida", min_value=1, step=1)
-    with c2:
-        nf_ent = st.text_input("Número da NF").upper()
-    if st.button("Confirmar Entrada"):
-        if nf_ent:
-            with conn.session as s:
-                s.execute(text("UPDATE produtos SET quantidade = quantidade + :q WHERE unidade = :unid AND item = :it"), {"q": q_ent, "unid": unidade_atual, "it": it_ent})
-                s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'ENTRADA', 'REPOSIÇÃO', :q, :nf)"),
-                          {"unid": unidade_atual, "it": it_ent, "dt": get_data_br(), "q": q_ent, "nf": nf_ent})
-                s.commit()
-            st.toast("📥 Estoque atualizado!", icon="📥")
-            time.sleep(0.5)
-            st.rerun()
+        with c2:
+            nf_ent = st.text_input("Número da NF").upper()
+        if st.button("Confirmar Entrada"):
+            if nf_ent:
+                with conn.session as s:
+                    s.execute(text("UPDATE produtos SET quantidade = quantidade + :q WHERE unidade = :unid AND item = :it"), {"q": q_ent, "unid": unidade_atual, "it": it_ent})
+                    s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'ENTRADA', 'REPOSIÇÃO', :q, :nf)"),
+                              {"unid": unidade_atual, "it": it_ent, "dt": get_data_br(), "q": q_ent, "nf": nf_ent})
+                    s.commit()
+                st.toast("📥 Estoque atualizado!", icon="📥")
+                time.sleep(0.5)
+                st.rerun()
 
 elif choice == "⚙️ Gestão":
     st.header(f"Gerenciamento - {unidade_atual}")
     t1, t2, t3, t4, t5, t6 = st.tabs(["🆕 Novo", "✏️ Ajustar", "📝 Renomear", "🗑️ Remover", "🧹 Histórico", "🚀 Reset"])
     
     with t1:
-        n_it = st.text_input("Nome do Periférico").upper()
-        n_q = st.number_input("Qtd Inicial", min_value=0)
-        n_m = st.number_input("Limite Mínimo", min_value=1, value=5)
-        n_nf = st.text_input("NF (Opcional)").upper()
+        st.subheader("Cadastrar Periférico")
+        n_it = st.text_input("Nome do Periférico", key="new_item").upper()
+        n_q = st.number_input("Qtd Inicial", min_value=0, key="new_qtd")
+        n_m = st.number_input("Limite Mínimo", min_value=1, value=5, key="new_min")
+        n_nf = st.text_input("NF (Opcional)", key="new_nf").upper()
         if st.button("Salvar Cadastro"):
             if n_it:
-                with conn.session as s:
-                    s.execute(text("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:unid, :it, :q, :m)"), {"unid": unidade_atual, "it": n_it, "q": n_q, "m": n_m})
-                    s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'CADASTRO', 'N/A', :q, :nf)"),
-                              {"unid": unidade_atual, "it": n_it, "dt": get_data_br(), "q": n_q, "nf": n_nf if n_nf else "N/A"})
-                    s.commit()
-                st.toast("✨ Item cadastrado!", icon="✨")
-                time.sleep(0.5)
-                st.rerun()
+                try:
+                    with conn.session as s:
+                        s.execute(text("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:unid, :it, :q, :m)"), {"unid": unidade_atual, "it": n_it, "q": n_q, "m": n_m})
+                        s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:unid, 'SISTEMA', :it, :dt, 'CADASTRO', 'N/A', :q, :nf)"),
+                                  {"unid": unidade_atual, "it": n_it, "dt": get_data_br(), "q": n_q, "nf": n_nf if n_nf else "N/A"})
+                        s.commit()
+                    st.toast("✨ Item cadastrado!", icon="✨")
+                    time.sleep(0.5)
+                    st.rerun()
+                except: st.error("Erro: Este item já existe nesta unidade.")
+
+    # Carregar itens para as outras abas
+    df_geral = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
 
     with t2:
-        df_itens = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
-        if not df_itens.empty:
-            it_edit = st.selectbox("Editar:", df_itens['item'].tolist(), key="sb_edit")
-            linha = df_itens[df_itens['item'] == it_edit].iloc[0]
+        if df_geral.empty: st.info("Nenhum item cadastrado para ajustar.")
+        else:
+            it_edit = st.selectbox("Editar:", df_geral['item'].tolist(), key="sb_edit")
+            linha = df_geral[df_geral['item'] == it_edit].iloc[0]
             nq = st.number_input("Nova Qtd", value=int(linha['quantidade']), key="ni_qtd")
             nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']), key="ni_min")
-            if st.button("Salvar Ajustes", key="btn_ajustar"):
+            if st.button("Salvar Ajustes"):
                 with conn.session as s:
                     s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it"), {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
                     s.commit()
@@ -200,10 +212,10 @@ elif choice == "⚙️ Gestão":
                 st.rerun()
 
     with t3:
-        df_ren = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
-        if not df_ren.empty:
-            it_ren = st.selectbox("Item para renomear:", df_ren['item'].tolist(), key="sb_ren")
-            novo_nome = st.text_input("Novo Nome").upper()
+        if df_geral.empty: st.info("Nenhum item cadastrado para renomear.")
+        else:
+            it_ren = st.selectbox("Item para renomear:", df_geral['item'].tolist(), key="sb_ren")
+            novo_nome = st.text_input("Novo Nome", key="ti_ren").upper()
             if st.button("Confirmar Renomeação"):
                 if novo_nome:
                     with conn.session as s:
@@ -215,9 +227,9 @@ elif choice == "⚙️ Gestão":
                     st.rerun()
 
     with t4:
-        df_rem = conn.query("SELECT item FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
-        if not df_rem.empty:
-            it_rem = st.selectbox("Escolha o item para remover", df_rem['item'].tolist(), key="sb_rem")
+        if df_geral.empty: st.info("Nenhum item cadastrado para remover.")
+        else:
+            it_rem = st.selectbox("Remover:", df_geral['item'].tolist(), key="sb_rem")
             if st.checkbox(f"Confirmo a remoção de {it_rem}"):
                 if st.button("Remover Agora"):
                     with conn.session as s:
@@ -228,7 +240,6 @@ elif choice == "⚙️ Gestão":
                     st.rerun()
 
     with t5:
-        st.subheader("Limpar Histórico")
         senha_h = st.text_input("Senha Admin (Histórico)", type="password", key="pw_hist")
         if senha_h == SENHA_ADMIN:
             if st.button("Apagar Histórico desta Unidade"):
@@ -240,12 +251,11 @@ elif choice == "⚙️ Gestão":
                 st.rerun()
 
     with t6:
-        st.error("⚠️ RESET TOTAL DO CATÁLOGO")
         senha_r = st.text_input("Senha Admin (Reset)", type="password", key="pw_reset")
         if senha_r == SENHA_ADMIN:
-            conf_text = st.text_input("Digite CONFIRMAR para apagar tudo:").upper()
+            conf_text = st.text_input("Digite CONFIRMAR:").upper()
             if conf_text == "CONFIRMAR":
-                if st.button("EXECUTAR RESET"):
+                if st.button("EXECUTAR RESET CATÁLOGO"):
                     with conn.session as s:
                         s.execute(text("DELETE FROM produtos WHERE unidade = :unid"), {"unid": unidade_atual})
                         s.commit()
@@ -255,7 +265,7 @@ elif choice == "⚙️ Gestão":
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
-    busca = st.text_input("🔍 Buscar por Colaborador, Item ou Chamado").upper()
+    busca = st.text_input("🔍 Buscar...").upper()
     query_hist = "SELECT colaborador as \"Colaborador\", item as \"Item\", quantidade as \"Qtd\", nf as \"NF\", data as \"Data/Hora\", tipo as \"Operação\", chamado as \"Ticket\" FROM historico WHERE unidade = :unid"
     params_hist = {"unid": unidade_atual}
     if busca:
@@ -266,6 +276,6 @@ elif choice == "📜 Histórico":
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
         excel_hist = gerar_excel_formatado(df_h, "Histórico", f"RELATÓRIO DE MOVIMENTAÇÃO - {unidade_atual}")
-        st.download_button("📥 Baixar Histórico Formatado (Excel)", excel_hist, f"historico_{unidade_atual}.xlsx")
+        st.download_button("📥 Baixar Histórico Formatado", excel_hist, f"historico_{unidade_atual}.xlsx")
     else:
         st.info("Nenhuma movimentação encontrada.")
