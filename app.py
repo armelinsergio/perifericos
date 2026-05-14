@@ -10,7 +10,7 @@ import pytz
 # ==========================================
 # 1. CONFIGURAÇÕES INICIAIS E USUÁRIOS
 # ==========================================
-UNIDADES_DISPONIVEIS = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+UNIDADES_DISPONIVEIS = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE"]
 SENHA_ADMIN = "admin123" # Senha para funções de exclusão (Reset)
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
@@ -32,8 +32,8 @@ USUARIOS = {
     
     # Técnicos Locais (Só veem a própria unidade)
     "matriz": {"senha": "123", "perfil": "LOCAL", "unidade": "MATRIZ"},
-    "sp": {"senha": "123", "perfil": "LOCAL", "unidade": "FILIAL SÃO PAULO"},
-    "rj": {"senha": "123", "perfil": "LOCAL", "unidade": "FILIAL RIO DE JANEIRO"}
+    "jv": {"senha": "123", "perfil": "LOCAL", "unidade": "JOINVILLE"},
+    "rj": {"senha": "123", "perfil": "LOCAL", "unidade": "RIO DE JANEIRO"}
 }
 
 # ==========================================
