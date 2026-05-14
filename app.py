@@ -7,27 +7,78 @@ import time
 from sqlalchemy import text
 import pytz
 
-# --- CONFIGURAÇÕES INICIAIS ---
-UNIDADES = ["MATRIZ", "RIO DE JANEIRO", "JOINVILLE", "BELO HORIZONTE"]
-SENHA_ADMIN = "admin123"
+# ==========================================
+# 1. CONFIGURAÇÕES INICIAIS E USUÁRIOS
+# ==========================================
+UNIDADES_DISPONIVEIS = ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]
+SENHA_ADMIN = "admin123" # Senha para funções de exclusão (Reset)
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESTILIZAÇÃO CSS ---
+# Esconde os menus padrão do Streamlit
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    [data-testid="stAppDeployButton"] {display: none;}
-    [data-testid="stToolbar"] {visibility: hidden;}
-    [data-testid="stDecoration"] {display: none;}
-    [data-testid="collapsedControl"] {visibility: visible !important; display: flex !important;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXÃO NATIVA ---
+# Dicionário de Usuários (Login)
+USUARIOS = {
+    # Gestão Global (Vê todas as unidades e recebe alertas)
+    "admin": {"senha": "123", "perfil": "GLOBAL", "unidade": "TODAS"},
+    
+    # Técnicos Locais (Só veem a própria unidade)
+    "matriz": {"senha": "123", "perfil": "LOCAL", "unidade": "MATRIZ"},
+    "sp": {"senha": "123", "perfil": "LOCAL", "unidade": "FILIAL SÃO PAULO"},
+    "rj": {"senha": "123", "perfil": "LOCAL", "unidade": "FILIAL RIO DE JANEIRO"}
+}
+
+# ==========================================
+# 2. SISTEMA DE LOGIN (AUTH WALL)
+# ==========================================
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+    st.session_state["usuario"] = None
+    st.session_state["perfil"] = None
+    st.session_state["unidade_acesso"] = None
+
+if not st.session_state["autenticado"]:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        try:
+            st.image(Image.open("logo_totvs_2025_white.png"), use_container_width=True)
+        except:
+            st.markdown("<h2 style='text-align: center;'>TOTVS</h2>", unsafe_allow_html=True)
+            
+        st.markdown("<h3 style='text-align: center;'>🔐 Acesso ao Sistema</h3>", unsafe_allow_html=True)
+        st.write("")
+        
+        user_input = st.text_input("Usuário").lower().strip()
+        pass_input = st.text_input("Senha", type="password")
+        
+        if st.button("Entrar", use_container_width=True):
+            if user_input in USUARIOS and USUARIOS[user_input]["senha"] == pass_input:
+                st.session_state["autenticado"] = True
+                st.session_state["usuario"] = user_input
+                st.session_state["perfil"] = USUARIOS[user_input]["perfil"]
+                st.session_state["unidade_acesso"] = USUARIOS[user_input]["unidade"]
+                st.rerun() # Reinicia para carregar o sistema
+            else:
+                st.error("❌ Credenciais inválidas!")
+    st.stop() # CRÍTICO: O código não passa daqui se não houver login.
+
+# Função de Logout
+def logout():
+    st.session_state["autenticado"] = False
+    st.rerun()
+
+# ==========================================
+# 3. BANCO DE DADOS E FUNÇÕES DE APOIO
+# ==========================================
 conn = st.connection("postgresql", type="sql", url=st.secrets["PG_URL"])
 
 def init_db():
@@ -48,7 +99,6 @@ def init_db():
 
 init_db()
 
-# --- FUNÇÕES DE APOIO ---
 def get_data_br():
     return datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
 
@@ -70,28 +120,47 @@ def gerar_excel_formatado(df, nome_aba, titulo):
     writer.close()
     return output.getvalue()
 
-# --- LOGO ---
-col_esq, col_centro, col_dir = st.columns([2, 1, 2])
-with col_centro:
-    try:
-        logo = Image.open("logo_totvs_2025_white.png")
-        st.image(logo, use_container_width=True)
-    except:
-        st.warning("⚠️ Logo não carregado.")
+# ==========================================
+# 4. MENU E CONTROLE DE VISIBILIDADE
+# ==========================================
+st.sidebar.markdown(f"👤 Logado como: **{st.session_state['usuario'].upper()}**")
+st.sidebar.button("Sair (Logout)", on_click=logout)
+st.sidebar.divider()
 
-# --- MENU ---
-st.sidebar.title("🏢 Unidade")
-unidade_atual = st.sidebar.selectbox("Selecione", UNIDADES)
+# Lógica de Visibilidade: Global vs Local
+if st.session_state["perfil"] == "GLOBAL":
+    st.sidebar.title("🏢 Unidade Visível")
+    unidade_atual = st.sidebar.selectbox("Selecione para visualizar", UNIDADES_DISPONIVEIS)
+else:
+    unidade_atual = st.session_state["unidade_acesso"]
+    st.sidebar.info(f"📍 Unidade Fixa: \n**{unidade_atual}**")
+
 st.sidebar.divider()
 menu = ["📊 Dashboard", "📤 Saída", "📥 Entrada", "⚙️ Gestão", "📜 Histórico"]
 choice = st.sidebar.selectbox("Menu Principal", menu)
 
-# --- TELAS ---
+# ==========================================
+# 5. TELAS DO SISTEMA
+# ==========================================
 
 if choice == "📊 Dashboard":
     st.header(f"Painel de Controle - {unidade_atual}")
-    df_u = conn.query("SELECT item as \"Produto\", quantidade as \"Estoque\", limite_minimo as \"Mínimo\" FROM produtos WHERE unidade = :unid ORDER BY item ASC", 
-                      params={"unid": unidade_atual}, ttl=0)
+    
+    # --- ALERTAS GLOBAIS (APENAS PARA USUÁRIO Y / GLOBAL) ---
+    if st.session_state["perfil"] == "GLOBAL":
+        df_alertas = conn.query("SELECT unidade as \"Unidade\", item as \"Produto\", quantidade as \"Estoque\", limite_minimo as \"Mínimo\" FROM produtos WHERE quantidade <= limite_minimo ORDER BY unidade, item ASC", ttl=0)
+        
+        if not df_alertas.empty:
+            st.toast("⚠️ Alerta: Existem itens críticos no estoque!", icon="🚨")
+            with st.expander("🚨 ALERTA GLOBAL - ITENS CRÍTICOS EM TODAS AS UNIDADES", expanded=True):
+                st.warning("Os seguintes itens atingiram o limite mínimo ou estão zerados em suas respectivas filiais:")
+                st.dataframe(df_alertas, use_container_width=True)
+                excel_alertas = gerar_excel_formatado(df_alertas, "Alertas Globais", "ITENS CRÍTICOS - TODAS AS UNIDADES")
+                st.download_button("📥 Baixar Relatório de Alertas (Excel)", excel_alertas, f"alertas_globais.xlsx")
+            st.divider()
+
+    # --- DASHBOARD DA UNIDADE SELECIONADA ---
+    df_u = conn.query("SELECT item as \"Produto\", quantidade as \"Estoque\", limite_minimo as \"Mínimo\" FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
 
     if df_u.empty:
         st.info(f"Nenhum item cadastrado em {unidade_atual}. Vá em 'Gestão' para começar.")
@@ -115,8 +184,7 @@ if choice == "📊 Dashboard":
             st.divider()
             st.markdown("#### 🛒 Reposição de Estoque")
             excel_compra = gerar_excel_formatado(df_compra, "Lista de Compras", f"SOLICITAÇÃO DE COMPRAS - {unidade_atual}")
-            st.download_button(label="📥 Baixar Lista de Compras Formatada", data=excel_compra,
-                               file_name=f"compras_{unidade_atual}.xlsx", mime="application/vnd.ms-excel")
+            st.download_button(label="📥 Baixar Lista de Compras Formatada", data=excel_compra, file_name=f"compras_{unidade_atual}.xlsx")
 
 elif choice == "📤 Saída":
     st.header(f"Registrar Entrega - {unidade_atual}")
@@ -145,6 +213,7 @@ elif choice == "📤 Saída":
                         time.sleep(0.5)
                         st.rerun()
                     else: st.error("Estoque insuficiente.")
+                else: st.error("Preencha todos os campos obrigatórios.")
 
 elif choice == "📥 Entrada":
     st.header(f"Entrada de Material (Reposição) - {unidade_atual}")
@@ -169,6 +238,7 @@ elif choice == "📥 Entrada":
                 st.toast("📥 Estoque atualizado!", icon="📥")
                 time.sleep(0.5)
                 st.rerun()
+            else: st.error("O número da NF é obrigatório para entrada.")
 
 elif choice == "⚙️ Gestão":
     st.header(f"Gerenciamento - {unidade_atual}")
@@ -193,7 +263,6 @@ elif choice == "⚙️ Gestão":
                     st.rerun()
                 except: st.error("Erro: Este item já existe nesta unidade.")
 
-    # Carregar itens para as outras abas
     df_geral = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :unid ORDER BY item ASC", params={"unid": unidade_atual}, ttl=0)
 
     with t2:
@@ -203,7 +272,7 @@ elif choice == "⚙️ Gestão":
             linha = df_geral[df_geral['item'] == it_edit].iloc[0]
             nq = st.number_input("Nova Qtd", value=int(linha['quantidade']), key="ni_qtd")
             nm = st.number_input("Novo Mínimo", value=int(linha['limite_minimo']), key="ni_min")
-            if st.button("Salvar Ajustes"):
+            if st.button("Salvar Ajustes", key="btn_ajustes"):
                 with conn.session as s:
                     s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :unid AND item = :it"), {"q": nq, "m": nm, "unid": unidade_atual, "it": it_edit})
                     s.commit()
@@ -265,14 +334,17 @@ elif choice == "⚙️ Gestão":
 
 elif choice == "📜 Histórico":
     st.header(f"Histórico - {unidade_atual}")
-    busca = st.text_input("🔍 Buscar...").upper()
+    busca = st.text_input("🔍 Buscar por Colaborador, Item ou Chamado").upper()
     query_hist = "SELECT colaborador as \"Colaborador\", item as \"Item\", quantidade as \"Qtd\", nf as \"NF\", data as \"Data/Hora\", tipo as \"Operação\", chamado as \"Ticket\" FROM historico WHERE unidade = :unid"
     params_hist = {"unid": unidade_atual}
+    
     if busca:
         query_hist += " AND (colaborador ILIKE :b OR item ILIKE :b OR chamado ILIKE :b)"
         params_hist["b"] = f"%{busca}%"
+    
     query_hist += " ORDER BY id DESC"
     df_h = conn.query(query_hist, params=params_hist, ttl=0)
+    
     if not df_h.empty:
         st.dataframe(df_h, use_container_width=True)
         excel_hist = gerar_excel_formatado(df_h, "Histórico", f"RELATÓRIO DE MOVIMENTAÇÃO - {unidade_atual}")
