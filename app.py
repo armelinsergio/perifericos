@@ -10,7 +10,7 @@ import pytz
 # ==========================================
 # 1. CONFIGURAÇÕES INICIAIS
 # ==========================================
-SENHA_ADMIN_MASTER = "admin123" 
+SENHA_ADMIN_MASTER = "admin123" # Senha para funções críticas de limpeza de banco
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
@@ -38,13 +38,18 @@ def init_db():
             session.execute(text("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT, perfil TEXT, unidade TEXT, primeiro_acesso BOOLEAN DEFAULT TRUE, permissao TEXT DEFAULT 'EDICAO');"))
             session.execute(text("CREATE TABLE IF NOT EXISTS reset_requests (username TEXT PRIMARY KEY, data_solicitacao TEXT);"))
             
+            # Popula unidades iniciais se estiver vazio
             res_u = session.execute(text("SELECT count(*) FROM unidades")).fetchone()
             if res_u[0] == 0:
                 for u in ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]:
                     session.execute(text("INSERT INTO unidades (nome) VALUES (:n)"), {"n": u})
             
-            # Cria Admin Master padrão
-            session.execute(text("INSERT INTO usuarios (username, password, perfil, unidade, primeiro_acesso, permissao) VALUES ('admin', '123', 'MASTER', 'TODAS', FALSE, 'EDICAO') ON CONFLICT (username) DO NOTHING;"))
+            # Cria NOVO Admin Master com senha admin123 e troca obrigatória (primeiro_acesso = TRUE)
+            session.execute(text("INSERT INTO usuarios (username, password, perfil, unidade, primeiro_acesso, permissao) VALUES ('master', 'admin123', 'MASTER', 'TODAS', TRUE, 'EDICAO') ON CONFLICT (username) DO NOTHING;"))
+            
+            # Deleta o antigo "admin" padrão para limpar o sistema
+            session.execute(text("DELETE FROM usuarios WHERE username = 'admin';"))
+            
             session.commit()
 
     try: executar_criacao()
@@ -120,7 +125,7 @@ if st.session_state["primeiro_acesso"]:
                         s.commit()
                     st.session_state["primeiro_acesso"] = False
                     st.success("✅ Senha atualizada!"); time.sleep(1); st.rerun()
-                else: st.error("Senhas não coincidem.")
+                else: st.error("Senhas não coincidem ou estão vazias.")
     st.stop()
 
 # ==========================================
@@ -245,12 +250,17 @@ elif choice == "⚙️ Gestão":
 
     if st.session_state["perfil"] == "MASTER":
         with tabs[1]: # LIMPEZA
+            st.subheader("Operações Críticas")
             pw = st.text_input("Senha Master", type="password")
             if pw == SENHA_ADMIN_MASTER:
-                if st.button("🚨 LIMPAR HISTÓRICO"):
+                if st.button("🚨 LIMPAR HISTÓRICO DESTA UNIDADE"):
                     with conn.session as s:
                         s.execute(text("DELETE FROM historico WHERE unidade = :u"), {"u": unidade_atual})
-                        s.commit(); st.success("Limpo!")
+                        s.commit(); st.success("✅ Histórico totalmente limpo!")
+                if st.button("🚀 ZERAR CATÁLOGO (Deletar tudo desta unidade)"):
+                    with conn.session as s:
+                        s.execute(text("DELETE FROM produtos WHERE unidade = :u"), {"u": unidade_atual})
+                        s.commit(); st.success("✅ Catálogo deletado!")
 
         with tabs[2]: # USUÁRIOS
             # ---- PAINEL DE RECUPERAÇÃO DE SENHA ----
@@ -289,7 +299,8 @@ elif choice == "⚙️ Gestão":
 
             st.divider()
             st.subheader("Gerenciar Usuários")
-            df_u_list = conn.query("SELECT * FROM usuarios WHERE username != 'admin'", ttl=0)
+            # Lista os usuários escondendo o próprio 'master' para evitar que o gestor delete ou bloqueie a própria conta por acidente
+            df_u_list = conn.query("SELECT * FROM usuarios WHERE username != 'master'", ttl=0)
             if not df_u_list.empty:
                 sel_u = st.selectbox("Selecionar Usuário:", df_u_list['username'].tolist())
                 dados_u = df_u_list[df_u_list['username'] == sel_u].iloc[0]
@@ -297,8 +308,7 @@ elif choice == "⚙️ Gestão":
                 with st.expander(f"✏️ Editar: {sel_u}", expanded=True):
                     c1, c2 = st.columns(2)
                     with c1:
-                        # Reset de Senha MANUAL
-                        st.write("**Redefinir Senha**")
+                        st.write("**Redefinir Senha Manualmente**")
                         nova_senha_manual = st.text_input("Nova Senha de Reset:", key="manual_pass")
                         if st.button("Executar Reset de Senha"):
                             if nova_senha_manual:
