@@ -19,24 +19,15 @@ st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initia
 # CSS Ajustado: O 'header' foi removido para que a seta do menu lateral volte a aparecer
 st.markdown("""
     <style>
-    /* Esconde o rodapé */
+    /* 1. Esconde o rodapé padrão da página */
     footer {visibility: hidden;}
 
-    /* Esconde os botões da direita (Git, Share, Deploy, etc) */
-    header [data-testid="stHeaderActionElements"] {
-        display: none !important;
-    }
+    /* 2. Esconde os botões da direita (Git, Share, Deploy, etc) */
+    header [data-testid="stHeaderActionElements"] {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important;}
 
-    /* Esconde a barra de ferramentas que aparece em alguns navegadores */
-    [data-testid="stToolbar"] {
-        display: none !important;
-    }
-
-    /* GARANTE que a seta do menu lateral continue visível e funcional */
-    [data-testid="collapsedControl"] {
-        visibility: visible !important;
-        display: flex !important;
-    }
+    /* 3. TRAVA O MENU LATERAL: Esconde o botão de fechar (o "X" ou a setinha de recolher) */
+    [data-testid="stSidebarCollapseButton"] {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
 # ==========================================
