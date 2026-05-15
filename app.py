@@ -19,25 +19,17 @@ st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initia
 # CSS Ajustado: O 'header' foi removido para que a seta do menu lateral volte a aparecer
 st.markdown("""
     <style>
-    /* 1. Esconde o rodapé 'Made with Streamlit' */
-    footer {visibility: hidden;}
+    /* Esconde o Rodapé padrão do Streamlit */
+    footer {display: none !important;}
     
-    /* 2. Mantém o cabeçalho visível (para a seta não sumir), mas o deixa transparente */
-    header {
-        visibility: visible !important;
-        background-color: transparent !important;
-    }
+    /* Esconde o Botão de Deploy */
+    .stAppDeployButton {display: none !important;}
     
-    /* 3. Esconde APENAS a barra de ferramentas do lado direito (GitHub, Menu 3 pontos e Deploy) */
-    [data-testid="stToolbar"] {
-        visibility: hidden !important; 
-        display: none !important;
-    }
+    /* Esconde a barra de ferramentas do lado direito (GitHub, etc) */
+    [data-testid="stToolbar"] {display: none !important;}
     
-    [data-testid="stAppDeployButton"] {
-        visibility: hidden !important; 
-        display: none !important;
-    }
+    /* Esconde o Menu de 3 pontinhos */
+    #MainMenu {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
 
