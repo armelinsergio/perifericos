@@ -45,9 +45,6 @@ def init_db():
             
             # Cria Admin Master padrão
             session.execute(text("INSERT INTO usuarios (username, password, perfil, unidade, primeiro_acesso, permissao) VALUES ('admin', '123', 'MASTER', 'TODAS', FALSE, 'EDICAO') ON CONFLICT (username) DO NOTHING;"))
-            
-            # Atualiza admin antigo para MASTER (caso você já tivesse rodado versões anteriores)
-            session.execute(text("UPDATE usuarios SET perfil = 'MASTER' WHERE username = 'admin' AND perfil = 'GLOBAL';"))
             session.commit()
 
     try: executar_criacao()
@@ -95,35 +92,35 @@ if not st.session_state["autenticado"]:
                     else: st.error("❌ Acesso negado")
                     
         with tab_reset:
-            st.info("Solicite o reset da sua senha. O Administrador Master irá aprovar e gerar uma senha provisória.")
+            st.info("Solicite o reset da sua senha ao Administrador Master.")
             with st.form("reset_form"):
-                user_reset = st.text_input("Qual é o seu Usuário (Login)?").lower().strip()
-                if st.form_submit_button("Solicitar Nova Senha", use_container_width=True):
+                user_reset = st.text_input("Qual é o seu Usuário?").lower().strip()
+                if st.form_submit_button("Solicitar Reset", use_container_width=True):
                     if user_reset:
                         df_check = conn.query("SELECT username FROM usuarios WHERE username = :u", params={"u": user_reset}, ttl=0)
                         if not df_check.empty:
                             with conn.session as s:
                                 s.execute(text("INSERT INTO reset_requests (username, data_solicitacao) VALUES (:u, :d) ON CONFLICT DO NOTHING"), {"u": user_reset, "d": datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")})
                                 s.commit()
-                            st.success(f"✅ Solicitação enviada! Comunique o Administrador Master.")
+                            st.success(f"✅ Solicitação enviada! Informe o Admin Master.")
                         else: st.error("Usuário não encontrado.")
     st.stop()
 
 if st.session_state["primeiro_acesso"]:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        st.warning("🔒 Altere sua senha provisória.")
+        st.warning("🔒 Altere sua senha provisória para continuar.")
         with st.form("form_pwd"):
             p1 = st.text_input("Nova Senha", type="password")
-            p2 = st.text_input("Confirme Senha", type="password")
-            if st.form_submit_button("Atualizar e Entrar"):
+            p2 = st.text_input("Confirme Nova Senha", type="password")
+            if st.form_submit_button("Salvar e Entrar"):
                 if p1 == p2 and p1:
                     with conn.session as s:
                         s.execute(text("UPDATE usuarios SET password = :p, primeiro_acesso = FALSE WHERE username = :u"), {"p": p1, "u": st.session_state["usuario"]})
                         s.commit()
                     st.session_state["primeiro_acesso"] = False
-                    st.success("✅ Senha atualizada com sucesso!"); time.sleep(1); st.rerun()
-                else: st.error("Senhas não conferem ou estão vazias.")
+                    st.success("✅ Senha atualizada!"); time.sleep(1); st.rerun()
+                else: st.error("Senhas não coincidem.")
     st.stop()
 
 # ==========================================
@@ -145,8 +142,8 @@ def gerar_excel(df, nome_aba, titulo):
 # ==========================================
 # 5. SIDEBAR E MENU
 # ==========================================
-st.sidebar.write(f"👤 **{st.session_state['usuario'].upper()}** | Perfil: {st.session_state['perfil']}")
-if st.sidebar.button("Sair"):
+st.sidebar.write(f"👤 **{st.session_state['usuario'].upper()}**")
+if st.sidebar.button("Sair (Logout)"):
     st.session_state["autenticado"] = False; st.rerun()
 
 UNIDADES_LISTA = get_unidades()
@@ -170,20 +167,16 @@ choice = st.sidebar.selectbox("Menu", menu_disponivel)
 # ==========================================
 
 if choice == "📊 Dashboard":
-    # 🚨 LÓGICA DE ALERTAS SUPER VISÍVEIS
     df_alertas_full = conn.query("SELECT unidade, item, quantidade, limite_minimo FROM produtos WHERE quantidade <= limite_minimo ORDER BY unidade, item ASC", ttl=0)
-    
     if not df_alertas_full.empty:
         if st.session_state["perfil"] in ["MASTER", "GLOBAL"]:
-            # Recebe alertas de TODAS as unidades
-            df_mostrar_alertas = df_alertas_full
+            df_mostrar = df_alertas_full
         else:
-            # Recebe alertas APENAS das unidades vinculadas a ele
-            df_mostrar_alertas = df_alertas_full[df_alertas_full['unidade'].isin(unidades_permitidas)]
+            df_mostrar = df_alertas_full[df_alertas_full['unidade'].isin(unidades_permitidas)]
             
-        if not df_mostrar_alertas.empty:
-            st.error("🚨 **ATENÇÃO: ITENS EM ESTOQUE CRÍTICO / ZERADO** 🚨")
-            st.dataframe(df_mostrar_alertas, use_container_width=True)
+        if not df_mostrar.empty:
+            st.error("🚨 **ITENS COM ESTOQUE CRÍTICO OU ZERADO**")
+            st.dataframe(df_mostrar, use_container_width=True)
             st.divider()
 
     st.header(f"Painel - {unidade_atual}")
@@ -209,8 +202,8 @@ elif choice == "📤 Saída":
                         s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:un, :c, :it, :d, 'SAÍDA', :ch, :q, 'N/A')"),
                                   {"un": unidade_atual, "c": colab, "it": it, "d": get_data_br(), "ch": cham, "q": qtd})
                         s.commit()
-                    st.success("✅ Saída registrada com sucesso!"); time.sleep(1); st.rerun()
-                else: st.error("❌ Sem estoque suficiente para esta saída!")
+                    st.success("✅ Saída registrada!"); time.sleep(1); st.rerun()
+                else: st.error("❌ Estoque insuficiente!")
 
 elif choice == "📥 Entrada":
     st.header("Entrada de Material")
@@ -228,164 +221,111 @@ elif choice == "📥 Entrada":
                         s.execute(text("INSERT INTO historico (unidade, colaborador, item, data, tipo, chamado, quantidade, nf) VALUES (:un, 'SISTEMA', :it, :d, 'ENTRADA', 'REPOSIÇÃO', :q, :nf)"),
                                   {"un": unidade_atual, "it": it, "d": get_data_br(), "q": qtd, "nf": nf})
                         s.commit()
-                    st.success("✅ Entrada registrada e estoque atualizado!"); time.sleep(1); st.rerun()
-                else: st.error("❌ A Nota Fiscal é obrigatória.")
+                    st.success("✅ Entrada registrada!"); time.sleep(1); st.rerun()
+                else: st.error("❌ NF é obrigatória.")
 
 elif choice == "⚙️ Gestão":
     st.header("Gestão do Sistema")
-    
-    # Controle rígido de abas: Apenas MASTER vê limpeza, usuários e unidades
     tab_list = ["📦 Itens"]
     if st.session_state["perfil"] == "MASTER":
         tab_list += ["🧹 Limpeza", "👥 Usuários", "🏢 Unidades"]
     tabs = st.tabs(tab_list)
     
-    with tabs[0]: # ITENS (Todos que tem acesso à Gestão veem)
+    with tabs[0]: # ITENS
         st.subheader("Novo Item")
         with st.form("new_item"):
             ni, nq, nm = st.text_input("Nome").upper(), st.number_input("Qtd", min_value=0), st.number_input("Min", min_value=1, value=5)
-            if st.form_submit_button("Cadastrar Novo Item"):
+            if st.form_submit_button("Salvar Cadastro"):
                 if ni:
                     try:
                         with conn.session as s:
                             s.execute(text("INSERT INTO produtos (unidade, item, quantidade, limite_minimo) VALUES (:u, :i, :q, :m)"), {"u": unidade_atual, "i": ni, "q": nq, "m": nm})
-                            s.commit()
-                        st.success(f"✅ Item '{ni}' cadastrado com sucesso!"); st.rerun()
-                    except: st.error("❌ Este item já existe.")
-        st.divider()
-        df_geral = conn.query("SELECT item, quantidade, limite_minimo FROM produtos WHERE unidade = :u ORDER BY item ASC", params={"u": unidade_atual}, ttl=0)
-        if not df_geral.empty:
-            it_edit = st.selectbox("Editar/Remover Item:", df_geral['item'].tolist())
-            linha = df_geral[df_geral['item'] == it_edit].iloc[0]
-            c1, c2 = st.columns(2)
-            with c1:
-                nq2, nm2 = st.number_input("Estoque Real", value=int(linha['quantidade'])), st.number_input("Alerta Mínimo", value=int(linha['limite_minimo']))
-                if st.button("Atualizar Quantidades"):
-                    with conn.session as s:
-                        s.execute(text("UPDATE produtos SET quantidade = :q, limite_minimo = :m WHERE unidade = :u AND item = :it"), {"q": nq2, "m": nm2, "u": unidade_atual, "it": it_edit})
-                        s.commit()
-                    st.success("✅ Quantidades atualizadas com sucesso!"); st.rerun()
-            with c2:
-                st.write("Exclusão")
-                if st.checkbox(f"Confirmar exclusão definitiva de {it_edit}"):
-                    if st.button("🗑️ Remover Item", type="primary"):
-                        with conn.session as s:
-                            s.execute(text("DELETE FROM produtos WHERE unidade = :u AND item = :it"), {"u": unidade_atual, "it": it_edit})
-                            s.commit()
-                        st.success("✅ Item removido com sucesso!"); st.rerun()
+                            s.commit(); st.success("✅ Cadastrado!"); st.rerun()
+                    except: st.error("❌ Já existe.")
 
     if st.session_state["perfil"] == "MASTER":
         with tabs[1]: # LIMPEZA
-            st.subheader("Operações Críticas")
             pw = st.text_input("Senha Master", type="password")
             if pw == SENHA_ADMIN_MASTER:
-                if st.button("🚨 LIMPAR HISTÓRICO DESTA UNIDADE"):
+                if st.button("🚨 LIMPAR HISTÓRICO"):
                     with conn.session as s:
                         s.execute(text("DELETE FROM historico WHERE unidade = :u"), {"u": unidade_atual})
-                        s.commit(); st.success("✅ Histórico totalmente limpo!")
-                if st.button("🚀 ZERAR CATÁLOGO (Deletar tudo desta unidade)"):
-                    with conn.session as s:
-                        s.execute(text("DELETE FROM produtos WHERE unidade = :u"), {"u": unidade_atual})
-                        s.commit(); st.success("✅ Catálogo deletado!")
+                        s.commit(); st.success("Limpo!")
 
         with tabs[2]: # USUÁRIOS
-            # ---- PAINEL DE APROVAÇÃO DE SENHA ----
+            # ---- PAINEL DE RECUPERAÇÃO DE SENHA ----
             df_requests = conn.query("SELECT * FROM reset_requests", ttl=0)
             if not df_requests.empty:
-                st.warning("⚠️ Solicitações de Recuperação de Senha Pendentes")
+                st.warning("⚠️ Solicitações Pendentes")
                 for index, req in df_requests.iterrows():
-                    user_req = req['username']
-                    col_r1, col_r2 = st.columns([3, 1])
-                    col_r1.write(f"Usuário: **{user_req}** | Solicitado em: {req['data_solicitacao']}")
-                    if col_r2.button(f"Aprovar Reset ({user_req})"):
-                        with conn.session as s:
-                            s.execute(text("UPDATE usuarios SET password = '1234', primeiro_acesso = TRUE WHERE username = :u"), {"u": user_req})
-                            s.execute(text("DELETE FROM reset_requests WHERE username = :u"), {"u": user_req})
-                            s.commit()
-                        st.success(f"✅ Senha do {user_req} resetada para 1234!"); st.rerun()
-                st.divider()
+                    u_req = req['username']
+                    with st.expander(f"Solicitação de: {u_req}"):
+                        senha_resp = st.text_input(f"Definir nova senha para {u_req}:", key=f"resp_{u_req}")
+                        if st.button(f"Aprovar Reset de {u_req}"):
+                            if senha_resp:
+                                with conn.session as s:
+                                    s.execute(text("UPDATE usuarios SET password = :p, primeiro_acesso = TRUE WHERE username = :u"), {"p": senha_resp, "u": u_req})
+                                    s.execute(text("DELETE FROM reset_requests WHERE username = :u"), {"u": u_req})
+                                    s.commit()
+                                st.success(f"✅ Reset concluído para {u_req}!"); st.rerun()
+                            else: st.error("Defina uma senha.")
+            st.divider()
 
-            st.subheader("Novo Colaborador")
+            st.subheader("Novo Usuário")
             with st.form("create_user"):
                 nu, ns = st.text_input("Login").lower().strip(), st.text_input("Senha Inicial")
-                c_perf, c_perm = st.columns(2)
-                with c_perf: np = st.selectbox("Perfil", ["LOCAL", "GLOBAL"])
-                with c_perm: n_perm = st.selectbox("Permissão", ["EDICAO", "LEITURA"])
+                c_p, c_m = st.columns(2)
+                with c_p: np = st.selectbox("Perfil", ["LOCAL", "GLOBAL"])
+                with c_m: n_perm = st.selectbox("Ações", ["EDICAO", "LEITURA"])
                 u_sel = st.multiselect("Unidades", UNIDADES_LISTA) if np == "LOCAL" else ["TODAS"]
                 if st.form_submit_button("Criar Usuário"):
-                    if nu and ns and (u_sel or np=="GLOBAL"):
+                    if nu and ns:
                         try:
                             with conn.session as s:
                                 s.execute(text("INSERT INTO usuarios (username, password, perfil, unidade, primeiro_acesso, permissao) VALUES (:u, :p, :perf, :un, TRUE, :perm)"),
                                           {"u": nu, "p": ns, "perf": np, "un": ",".join(u_sel), "perm": n_perm})
-                                s.commit()
-                            st.success(f"✅ Usuário '{nu}' criado com sucesso!"); st.rerun()
-                        except: st.error("❌ Login já existe.")
-            
+                                s.commit(); st.success("✅ Criado!"); st.rerun()
+                        except: st.error("Login já existe.")
+
             st.divider()
-            st.subheader("Editar Usuários")
-            df_users = conn.query("SELECT * FROM usuarios WHERE username != 'admin'", ttl=0)
-            if not df_users.empty:
-                col_u = st.selectbox("Selecione Colaborador:", df_users['username'].tolist())
-                dados_u = df_users[df_users['username'] == col_u].iloc[0]
+            st.subheader("Gerenciar Usuários")
+            df_u_list = conn.query("SELECT * FROM usuarios WHERE username != 'admin'", ttl=0)
+            if not df_u_list.empty:
+                sel_u = st.selectbox("Selecionar Usuário:", df_u_list['username'].tolist())
+                dados_u = df_u_list[df_u_list['username'] == sel_u].iloc[0]
                 
-                with st.expander(f"✏️ Editar: {col_u}", expanded=True):
+                with st.expander(f"✏️ Editar: {sel_u}", expanded=True):
                     c1, c2 = st.columns(2)
                     with c1:
-                        cur_units = dados_u['unidade'].split(",") if dados_u['perfil'] == "LOCAL" else []
-                        nova_unid = st.multiselect("Unidades de Acesso:", UNIDADES_LISTA, default=[u for u in cur_units if u in UNIDADES_LISTA]) if dados_u['perfil'] == "LOCAL" else ["TODAS"]
-                        nova_perm = st.selectbox("Nível de Acesso:", ["EDICAO", "LEITURA"], index=0 if dados_u['permissao'] == "EDICAO" else 1)
-                        if st.button("Gravar Alterações de Acesso"):
-                            with conn.session as s:
-                                s.execute(text("UPDATE usuarios SET unidade = :un, permissao = :perm WHERE username = :u"), {"un": ",".join(nova_unid), "perm": nova_perm, "u": col_u})
-                                s.commit()
-                            st.success(f"✅ Acessos do usuário '{col_u}' gravados!"); time.sleep(1); st.rerun()
-                    with c2:
-                        novo_login = st.text_input("Mudar Nome de Login:", placeholder=col_u).lower().strip()
-                        if st.button("Gravar Novo Login"):
-                            if novo_login:
+                        # Reset de Senha MANUAL
+                        st.write("**Redefinir Senha**")
+                        nova_senha_manual = st.text_input("Nova Senha de Reset:", key="manual_pass")
+                        if st.button("Executar Reset de Senha"):
+                            if nova_senha_manual:
                                 with conn.session as s:
-                                    s.execute(text("UPDATE usuarios SET username = :n WHERE username = :o"), {"n": novo_login, "o": col_u})
+                                    s.execute(text("UPDATE usuarios SET password = :p, primeiro_acesso = TRUE WHERE username = :u"), {"p": nova_senha_manual, "u": sel_u})
                                     s.commit()
-                                st.success("✅ Login renomeado com sucesso!"); st.rerun()
-                        st.write("---")
-                        if st.button("Forçar Reset de Senha (1234)"):
+                                st.success(f"✅ Senha alterada! O usuário deverá trocar no próximo login."); st.rerun()
+                            else: st.error("Digite a nova senha.")
+                    with c2:
+                        st.write("**Unidades e Permissões**")
+                        u_atuais = dados_u['unidade'].split(",") if dados_u['perfil'] == "LOCAL" else []
+                        n_u = st.multiselect("Unidades:", UNIDADES_LISTA, default=[x for x in u_atuais if x in UNIDADES_LISTA]) if dados_u['perfil'] == "LOCAL" else ["TODAS"]
+                        n_p = st.selectbox("Nível:", ["EDICAO", "LEITURA"], index=0 if dados_u['permissao'] == "EDICAO" else 1)
+                        if st.button("Salvar Acessos"):
                             with conn.session as s:
-                                s.execute(text("UPDATE usuarios SET password = '1234', primeiro_acesso = TRUE WHERE username = :u"), {"u": col_u})
-                                s.commit()
-                            st.success("✅ Senha resetada. O usuário terá que trocar no próximo login."); st.rerun()
-                
-                if st.checkbox(f"Confirmar exclusão definitiva do usuário {col_u}"):
-                    if st.button("🗑️ Deletar Usuário", type="primary"):
-                        with conn.session as s:
-                            s.execute(text("DELETE FROM usuarios WHERE username = :u"), {"u": col_u})
-                            s.execute(text("DELETE FROM reset_requests WHERE username = :u"), {"u": col_u})
-                            s.commit()
-                        st.success("✅ Usuário deletado do sistema!"); time.sleep(1); st.rerun()
+                                s.execute(text("UPDATE usuarios SET unidade = :un, permissao = :perm WHERE username = :u"), {"un": ",".join(n_u), "perm": n_p, "u": sel_u})
+                                s.commit(); st.success("Salvo!"); st.rerun()
 
         with tabs[3]: # UNIDADES
-            st.subheader("Nova Filial")
+            st.subheader("Filiais")
             with st.form("add_u"):
-                nu_nome = st.text_input("Nome da Nova Unidade").upper().strip()
+                n_unid = st.text_input("Nova Unidade").upper().strip()
                 if st.form_submit_button("Adicionar"):
-                    if nu_nome:
+                    if n_unid:
                         with conn.session as s:
-                            s.execute(text("INSERT INTO unidades (nome) VALUES (:n) ON CONFLICT DO NOTHING"), {"n": nu_nome})
-                            s.commit()
-                        st.success(f"✅ Unidade '{nu_nome}' adicionada com sucesso!"); st.rerun()
-            st.divider()
-            st.subheader("Renomear Filial")
-            u_v = st.selectbox("Unidade Antiga:", UNIDADES_LISTA)
-            u_n = st.text_input("Novo Nome da Unidade:").upper().strip()
-            if st.button("Gravar Novo Nome de Unidade"):
-                if u_n and u_n != u_v:
-                    with conn.session as s:
-                        s.execute(text("INSERT INTO unidades (nome) VALUES (:n)"), {"n": u_n})
-                        s.execute(text("UPDATE produtos SET unidade = :n WHERE unidade = :o"), {"n": u_n, "o": u_v})
-                        s.execute(text("UPDATE historico SET unidade = :n WHERE unidade = :o"), {"n": u_n, "o": u_v})
-                        s.execute(text("DELETE FROM unidades WHERE nome = :o"), {"o": u_v})
-                        s.commit()
-                    st.success("✅ Unidade renomeada! Históricos e estoques foram atualizados automaticamente."); st.rerun()
+                            s.execute(text("INSERT INTO unidades (nome) VALUES (:n) ON CONFLICT DO NOTHING"), {"n": n_unid})
+                            s.commit(); st.success("Adicionada!"); st.rerun()
 
 elif choice == "📜 Histórico":
     st.header("Movimentações")
