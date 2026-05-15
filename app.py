@@ -6,6 +6,7 @@ from PIL import Image
 import time
 from sqlalchemy import text
 import pytz
+import uuid # Biblioteca nativa para gerar tokens de segurança
 
 # ==========================================
 # 1. CONFIGURAÇÕES INICIAIS
@@ -15,11 +16,11 @@ fuso_br = pytz.timezone('America/Sao_Paulo')
 
 st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initial_sidebar_state="expanded")
 
+# CSS Ajustado: O 'header' foi removido para que a seta do menu lateral volte a aparecer
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -43,8 +44,8 @@ def init_db():
                 for u in ["MATRIZ", "FILIAL SÃO PAULO", "FILIAL RIO DE JANEIRO"]:
                     session.execute(text("INSERT INTO unidades (nome) VALUES (:n)"), {"n": u})
             
-            # Cria Admin Master padrão
             session.execute(text("INSERT INTO usuarios (username, password, perfil, unidade, primeiro_acesso, permissao) VALUES ('master', 'admin123', 'MASTER', 'TODAS', TRUE, 'EDICAO') ON CONFLICT (username) DO NOTHING;"))
+            session.execute(text("DELETE FROM usuarios WHERE username = 'admin';"))
             session.commit()
 
     try: executar_criacao()
@@ -53,6 +54,14 @@ def init_db():
         try: executar_criacao()
         except Exception as e: st.error(f"Erro ao inicializar banco: {e}")
 
+    # Adiciona a coluna de Token de Sessão (para sobrevivência ao F5) sem quebrar dados existentes
+    try:
+        with conn.session as s:
+            s.execute(text("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS session_token TEXT;"))
+            s.commit()
+    except:
+        pass 
+
 init_db()
 
 def get_unidades():
@@ -60,11 +69,27 @@ def get_unidades():
     return df['nome'].tolist()
 
 # ==========================================
-# 3. SISTEMA DE LOGIN E RECUPERAÇÃO
+# 3. SISTEMA DE LOGIN E RECUPERAÇÃO (COM TOKEN)
 # ==========================================
 if "autenticado" not in st.session_state:
     st.session_state.update({"autenticado": False, "usuario": None, "perfil": None, "unidade_acesso": None, "primeiro_acesso": False, "permissao": None})
 
+# ---- TENTATIVA DE AUTO-LOGIN (O que impede o F5 de deslogar) ----
+if not st.session_state["autenticado"] and "session" in st.query_params:
+    token_url = st.query_params["session"]
+    df_token = conn.query("SELECT * FROM usuarios WHERE session_token = :t", params={"t": token_url}, ttl=0)
+    if not df_token.empty:
+        user_info = df_token.iloc[0]
+        st.session_state.update({
+            "autenticado": True,
+            "usuario": user_info["username"],
+            "perfil": user_info["perfil"],
+            "unidade_acesso": user_info["unidade"],
+            "primeiro_acesso": user_info["primeiro_acesso"],
+            "permissao": user_info["permissao"] if pd.notna(user_info["permissao"]) else "EDICAO"
+        })
+
+# ---- TELA DE LOGIN ----
 if not st.session_state["autenticado"]:
     st.markdown("<br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -81,6 +106,14 @@ if not st.session_state["autenticado"]:
                 if st.form_submit_button("Entrar", use_container_width=True):
                     df_user = conn.query("SELECT * FROM usuarios WHERE username = :u", params={"u": user_input}, ttl=0)
                     if not df_user.empty and df_user.iloc[0]["password"] == pass_input:
+                        
+                        # Gera um token único e salva no Banco e na URL para manter logado
+                        novo_token = str(uuid.uuid4())
+                        with conn.session as s:
+                            s.execute(text("UPDATE usuarios SET session_token = :t WHERE username = :u"), {"t": novo_token, "u": user_input})
+                            s.commit()
+                        st.query_params["session"] = novo_token
+                        
                         st.session_state.update({
                             "autenticado": True, "usuario": user_input,
                             "perfil": df_user.iloc[0]["perfil"],
@@ -124,7 +157,7 @@ if st.session_state["primeiro_acesso"]:
     st.stop()
 
 # ==========================================
-# 4. FUNÇÕES GERAIS
+# 4. FUNÇÕES GERAIS E EXPORTAÇÃO
 # ==========================================
 def get_data_br(): return datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
 
@@ -143,8 +176,17 @@ def gerar_excel(df, nome_aba, titulo):
 # 5. SIDEBAR E MENU
 # ==========================================
 st.sidebar.write(f"👤 **{st.session_state['usuario'].upper()}**")
+
 if st.sidebar.button("Sair (Logout)"):
-    st.session_state["autenticado"] = False; st.rerun()
+    # Limpa o token do banco e da URL na hora de sair
+    try:
+        with conn.session as s:
+            s.execute(text("UPDATE usuarios SET session_token = NULL WHERE username = :u"), {"u": st.session_state["usuario"]})
+            s.commit()
+    except: pass
+    st.query_params.clear()
+    st.session_state["autenticado"] = False
+    st.rerun()
 
 UNIDADES_LISTA = get_unidades()
 
@@ -360,7 +402,6 @@ elif choice == "⚙️ Gestão":
                             n_u = st.multiselect("Unidades Permitidas:", UNIDADES_LISTA, default=[x for x in u_atuais if x in UNIDADES_LISTA], key="edit_unid")
                         else:
                             n_u = ["TODAS"]
-                            st.info("Perfil GLOBAL possui acesso visual a TODAS as unidades.")
                             
                         n_p = st.selectbox("Permissão no Sistema:", ["EDICAO", "LEITURA"], index=0 if dados_u['permissao'] == "EDICAO" else 1, key="edit_perm")
                         
@@ -403,11 +444,10 @@ elif choice == "⚙️ Gestão":
                         s.execute(text("INSERT INTO unidades (nome) VALUES (:n)"), {"n": u_n})
                         s.execute(text("UPDATE produtos SET unidade = :n WHERE unidade = :o"), {"n": u_n, "o": u_v})
                         s.execute(text("UPDATE historico SET unidade = :n WHERE unidade = :o"), {"n": u_n, "o": u_v})
-                        # Ajuste para atualizar também as permissões atreladas aos usuários locais
                         s.execute(text("UPDATE usuarios SET unidade = REPLACE(unidade, :o, :n) WHERE perfil = 'LOCAL' AND unidade LIKE :like_o"), {"n": u_n, "o": u_v, "like_o": f"%{u_v}%"})
                         s.execute(text("DELETE FROM unidades WHERE nome = :o"), {"o": u_v})
                         s.commit()
-                    st.success("✅ Unidade renomeada! Históricos, estoques e acessos de usuários atualizados automaticamente."); st.rerun()
+                    st.success("✅ Unidade renomeada! Históricos, estoques e acessos atualizados."); st.rerun()
 
 elif choice == "📜 Histórico":
     st.header("Movimentações")
