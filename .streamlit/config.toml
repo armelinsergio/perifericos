@@ -1,4 +1,4 @@
 [theme]
 base="dark"
 [client]
-toolbarMode = "viewer"
+toolbarMode = "minimal"
