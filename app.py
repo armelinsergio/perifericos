@@ -19,8 +19,24 @@ st.set_page_config(page_title="Controle de Estoque TOTVS", layout="wide", initia
 # CSS Ajustado: O 'header' foi removido para que a seta do menu lateral volte a aparecer
 st.markdown("""
     <style>
-    /* Esconde apenas o rodapé padrão do Streamlit */
+    /* Esconde o rodapé */
     footer {visibility: hidden;}
+
+    /* Esconde os botões da direita (Git, Share, Deploy, etc) */
+    header [data-testid="stHeaderActionElements"] {
+        display: none !important;
+    }
+
+    /* Esconde a barra de ferramentas que aparece em alguns navegadores */
+    [data-testid="stToolbar"] {
+        display: none !important;
+    }
+
+    /* GARANTE que a seta do menu lateral continue visível e funcional */
+    [data-testid="collapsedControl"] {
+        visibility: visible !important;
+        display: flex !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 # ==========================================
