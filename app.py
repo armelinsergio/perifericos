@@ -81,7 +81,6 @@ def init_db():
 
 init_db()
 
-# Função para pegar unidades dinamicamente
 def get_unidades():
     df = conn.query("SELECT nome FROM unidades ORDER BY nome ASC", ttl=0)
     return df['nome'].tolist()
@@ -230,7 +229,6 @@ elif choice == "📥 Entrada":
 elif choice == "⚙️ Gestão":
     st.header("Configurações do Sistema")
     
-    # Define as abas baseadas no perfil
     tab_list = ["📦 Itens", "📜 Limpeza"]
     if st.session_state["perfil"] == "GLOBAL":
         tab_list += ["👥 Usuários", "🏢 Unidades"]
@@ -263,7 +261,7 @@ elif choice == "⚙️ Gestão":
                 st.success("Limpo!")
 
     if st.session_state["perfil"] == "GLOBAL":
-        with tabs[2]: # GESTÃO DE USUÁRIOS (ADMIN)
+        with tabs[2]: # GESTÃO DE USUÁRIOS
             st.subheader("Novo Colaborador")
             with st.form("create_user"):
                 nu = st.text_input("Login").lower().strip()
@@ -283,7 +281,9 @@ elif choice == "⚙️ Gestão":
             if not df_users.empty:
                 col_u = st.selectbox("Selecione Usuário", df_users['username'].tolist())
                 
-                c1, c2 = st.columns(2)
+                # Dividido em 3 colunas para acomodar a Exclusão
+                c1, c2, c3 = st.columns(3)
+                
                 with c1:
                     st.write("**Renomear Usuário**")
                     novo_login = st.text_input("Novo Login").lower().strip()
@@ -300,9 +300,20 @@ elif choice == "⚙️ Gestão":
                         with conn.session as s:
                             s.execute(text("UPDATE usuarios SET password = '1234', primeiro_acesso = TRUE WHERE username = :u"), {"u": col_u})
                             s.commit()
-                        st.warning(f"Senha do {col_u} agora é '1234'. Ele deverá trocar ao logar.")
+                        st.warning(f"Senha do {col_u} agora é '1234'.")
 
-        with tabs[3]: # GESTÃO DE UNIDADES (ADMIN)
+                with c3:
+                    st.write("**Remover Usuário**")
+                    if st.checkbox(f"Confirmar exclusão de {col_u}"):
+                        # Adicionado botão vermelho (type="primary" no Streamlit escuro fica com destaque)
+                        if st.button("Deletar Usuário", type="primary"):
+                            with conn.session as s:
+                                s.execute(text("DELETE FROM usuarios WHERE username = :u"), {"u": col_u})
+                                s.commit()
+                            st.success(f"Usuário {col_u} deletado!")
+                            time.sleep(1); st.rerun()
+
+        with tabs[3]: # GESTÃO DE UNIDADES
             st.subheader("Nova Unidade")
             with st.form("add_unid"):
                 nome_u = st.text_input("Nome da Nova Filial").upper().strip()
@@ -321,7 +332,6 @@ elif choice == "⚙️ Gestão":
             if st.button("Confirmar Mudança de Nome"):
                 if u_nova and u_nova != u_velha:
                     with conn.session as s:
-                        # Ordem é importante para manter integridade
                         s.execute(text("INSERT INTO unidades (nome) VALUES (:n)"), {"n": u_nova})
                         s.execute(text("UPDATE produtos SET unidade = :n WHERE unidade = :o"), {"n": u_nova, "o": u_velha})
                         s.execute(text("UPDATE historico SET unidade = :n WHERE unidade = :o"), {"n": u_nova, "o": u_velha})
